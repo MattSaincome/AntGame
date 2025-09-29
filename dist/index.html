@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monster Hive Miner</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        #game-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 14px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .stat-bar {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .stat-label {
+            width: 120px;
+        }
+        .control-hint {
+            margin-top: 15px;
+            font-size: 12px;
+            color: #cccccc;
+        }
+    </style>
+  <script type="module" crossorigin src="./assets/index-d9eb69f7.js"></script>
+</head>
+<body>
+    <div id="game-container">
+        <div id="ui-overlay">
+            <div class="stat-bar">
+                <span class="stat-label">Population:</span>
+                <span id="population">5</span>
+            </div>
+            <div class="stat-bar">
+                <span class="stat-label">Resources:</span>
+                <span id="resources">0</span>
+            </div>
+            <div class="stat-bar">
+                <span class="stat-label">Next Wave:</span>
+                <span id="wave-timer">2:00</span>
+            </div>
+            <div class="control-hint">
+                WASD: Move Camera<br>
+                Mouse: Select/Command<br>
+                Space: Pause<br>
+                B: Breed Monsters
+            </div>
+        </div>
+    </div>
+    
+</body>
+</html>
