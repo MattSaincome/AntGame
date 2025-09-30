@@ -676,18 +676,61 @@ export class GameScene extends Phaser.Scene {
         }
         */
         
-        // Animate walking, mining, carrying, or face-planting
+        // === SPRITE ANIMATIONS ===
         const isMoving = Math.abs(monster.position.vx) > 0.1 || Math.abs(monster.position.vy) > 0.1;
         const isMining = monster.state === MonsterState.MINING;
         const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
-        const isFacePlanted = (monster as any).facePlanted || false;
-        const isRecovering = isFacePlanted && (monster as any).recoverTime < 0.5;
+        const isFalling = monster.position.vy > 100;
+        const isJumping = monster.position.vy < -100;
+        const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
         
-        // Pass state to animation system
-        (monster.sprite as any).isFacePlanted = isFacePlanted;
-        (monster.sprite as any).isRecovering = isRecovering;
+        // Get base scale
+        const baseScale = Math.abs(monster.sprite.scaleX);
         
-        // Simplified renderer doesn't need animation calls
+        // Walking bounce animation
+        if (isWalking) {
+          const bounceSpeed = Math.abs(monster.position.vx) * 0.01;
+          const bounce = Math.sin(this.time.now * bounceSpeed) * 0.03;
+          monster.sprite.setScale(baseScale * (1 + bounce), baseScale * (1 - bounce * 0.5));
+          
+          // Slight tilt when moving
+          const tilt = (monster.position.vx > 0 ? 0.05 : -0.05);
+          monster.sprite.rotation = tilt;
+        }
+        // Jumping squash/stretch
+        else if (isJumping) {
+          monster.sprite.setScale(baseScale * 0.85, baseScale * 1.15); // Tall and thin
+          monster.sprite.rotation = monster.position.vx * 0.0005; // Slight lean in direction
+        }
+        // Falling squash/stretch
+        else if (isFalling) {
+          monster.sprite.setScale(baseScale * 1.1, baseScale * 0.9); // Wide and flat
+          monster.sprite.rotation = 0;
+        }
+        // Mining animation (pick swing)
+        else if (isMining) {
+          const swingSpeed = 0.01;
+          const swing = Math.sin(this.time.now * swingSpeed) * 0.15;
+          monster.sprite.rotation = swing;
+          monster.sprite.setScale(baseScale, baseScale);
+        }
+        // Carrying - slightly squashed from weight
+        else if (isCarrying) {
+          monster.sprite.setScale(baseScale * 1.05, baseScale * 0.95); // Compressed
+          monster.sprite.rotation = 0;
+        }
+        // Idle - return to normal
+        else {
+          monster.sprite.setScale(baseScale, baseScale);
+          monster.sprite.rotation = 0;
+        }
+        
+        // Flip sprite based on movement direction
+        if (monster.position.vx < -5) {
+          monster.sprite.setScale(-Math.abs(monster.sprite.scaleX), monster.sprite.scaleY);
+        } else if (monster.position.vx > 5) {
+          monster.sprite.setScale(Math.abs(monster.sprite.scaleX), monster.sprite.scaleY);
+        }
       }
       
       return true;
@@ -731,7 +774,7 @@ export class GameScene extends Phaser.Scene {
           const dy = (hivePos.y - monster.position.y) / distanceToHive;
           
           // Check if path toward hive is clear
-          const speed = 80 * urgencyBoost * deltaTime;
+          const speed = 150 * urgencyBoost * deltaTime; // 2x faster
           const checkX = monster.position.x + dx * speed * 30; // Look ahead
           const checkY = monster.position.y + dy * speed * 30;
           
@@ -790,7 +833,7 @@ export class GameScene extends Phaser.Scene {
 
     // Move toward exploration target if far enough away
     if (distanceToTarget > 25) {
-      const speed = 30 * deltaTime; // Moderate exploration speed
+      const speed = 60 * deltaTime; // Faster exploration speed
       const dx = (explorationTarget.x - monster.position.x) / distanceToTarget;
       const dy = (explorationTarget.y - monster.position.y) / distanceToTarget;
 
@@ -1684,19 +1727,19 @@ export class GameScene extends Phaser.Scene {
         if (monster.position.onGround && shouldAutoJump) {
           // Auto-jump to escape hole or climb towards hive when carrying
           // ULTRA STRONG jumps for pyramid!
-          const jumpForce = monster.isClimbing ? -800 : // ULTRA jump when climbing without load
-                           nearPyramid && isCarrying ? -750 : // SUPER strong for carrying up pyramid
-                           nearPyramid ? -650 : // Strong pyramid jump
-                           (isCarrying ? -500 : -450); // Normal jumps
+          const jumpForce = monster.isClimbing ? -950 : // ULTRA jump when climbing without load
+                           nearPyramid && isCarrying ? -900 : // SUPER strong for carrying up pyramid
+                           nearPyramid ? -800 : // Strong pyramid jump
+                           (isCarrying ? -650 : -600); // Stronger normal jumps
           monster.position.vy = jumpForce;
           
           // Direct toward hive center when near pyramid
           if (nearPyramid) {
             const hiveDir = this.colonyHive.x > monster.position.x ? 1 : -1;
-            monster.position.vx = hiveDir * 150; // Strong forward momentum
+            monster.position.vx = hiveDir * 200; // Very strong forward momentum
             console.log(`Monster ${monster.id} PYRAMID CLIMBING - powerful jump towards hive!`);
           } else {
-            monster.position.vx = monster.position.vx > 0 ? 120 : -120; // Good forward momentum
+            monster.position.vx = monster.position.vx > 0 ? 160 : -160; // Strong forward momentum
             console.log(`Monster ${monster.id} ${isCarrying ? 'CARRYING - jumping towards hive' : 'auto-jumping out of hole'}`);
           }
         } else {
