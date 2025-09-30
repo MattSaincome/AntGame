@@ -375,6 +375,38 @@ export class TrueProceduralPartsRenderer {
       // Don't create fallback - just skip the head entirely
     }
     
+    // Apply pattern overlays to body and head BEFORE facial features (so patterns render below)
+    if (appearance.patternType && appearance.patternType !== PatternType.NONE && appearance.patternIntensity && appearance.patternColor) {
+      // Apply pattern to body
+      if (bodySprite) {
+        const bodyPattern = this.patternOverlaySystem.applyPattern(
+          bodySprite,
+          appearance.patternType,
+          appearance.patternColor,
+          appearance.patternIntensity
+        );
+        if (bodyPattern) {
+          container.add(bodyPattern);
+          (container as any).bodyPattern = bodyPattern; // Store for cleanup
+          console.log(`🎨 Applied ${appearance.patternType} pattern to body (intensity: ${(appearance.patternIntensity * 100).toFixed(0)}%)`);
+        }
+      }
+      
+      // Apply pattern to head (slightly lower intensity for subtle variety)
+      if (headSprite) {
+        const headPattern = this.patternOverlaySystem.applyPattern(
+          headSprite,
+          appearance.patternType,
+          appearance.patternColor,
+          appearance.patternIntensity * 0.8 // Slightly less intense on head
+        );
+        if (headPattern) {
+          container.add(headPattern);
+          (container as any).headPattern = headPattern; // Store for cleanup
+        }
+      }
+    }
+    
     // Add face with blinking capability
     const faceOptions = this.availableParts.faces.find(f => f.type === selectedHead);
     if (faceOptions && faceOptions.variants.length > 0) {
@@ -387,7 +419,7 @@ export class TrueProceduralPartsRenderer {
       const initialFace = faceVariants[0]; // Usually Face 01 is open eyes
       if (this.scene.textures.exists(initialFace)) {
         const faceSprite = this.scene.add.sprite(0, bodySprite ? -10 : 0, initialFace);
-        faceSprite.setDepth(1);
+        faceSprite.setDepth(25); // Above patterns (depth 1)
         faceSprite.setName('face');
         container.add(faceSprite);
         
@@ -873,37 +905,7 @@ export class TrueProceduralPartsRenderer {
     
     // Weapons removed - not needed for this game
     
-    // Apply pattern overlays to body and head (genetically inherited patterns)
-    if (appearance.patternType && appearance.patternType !== PatternType.NONE && appearance.patternIntensity && appearance.patternColor) {
-      // Apply pattern to body
-      if (bodySprite) {
-        const bodyPattern = this.patternOverlaySystem.applyPattern(
-          bodySprite,
-          appearance.patternType,
-          appearance.patternColor,
-          appearance.patternIntensity
-        );
-        if (bodyPattern) {
-          container.add(bodyPattern);
-          (container as any).bodyPattern = bodyPattern; // Store for cleanup
-          console.log(`🎨 Applied ${appearance.patternType} pattern to body (intensity: ${(appearance.patternIntensity * 100).toFixed(0)}%)`);
-        }
-      }
-      
-      // Apply pattern to head (slightly lower intensity for subtle variety)
-      if (headSprite) {
-        const headPattern = this.patternOverlaySystem.applyPattern(
-          headSprite,
-          appearance.patternType,
-          appearance.patternColor,
-          appearance.patternIntensity * 0.8 // Slightly less intense on head
-        );
-        if (headPattern) {
-          container.add(headPattern);
-          (container as any).headPattern = headPattern; // Store for cleanup
-        }
-      }
-    }
+    // Patterns already applied earlier (before facial features) to ensure correct layering
     
     // Apply life stage scaling - 1.5-2 blocks tall (16px = 1 block)
     // Target: 24-32px tall monsters = 0.06-0.08 scale for ~400px sprites

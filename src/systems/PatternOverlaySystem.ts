@@ -27,14 +27,16 @@ export class PatternOverlaySystem {
       return null;
     }
     
-    const width = sprite.displayWidth;
-    const height = sprite.displayHeight;
+    // Shrink pattern significantly to stay well within sprite bounds (70% of size)
+    const width = sprite.displayWidth * 0.7;
+    const height = sprite.displayHeight * 0.7;
     
     // Create graphics overlay CONSTRAINED to sprite bounds
     const graphics = this.scene.add.graphics();
+    // Center the smaller pattern on the sprite
     graphics.setPosition(sprite.x - width / 2, sprite.y - height / 2);
     graphics.setAlpha(intensity);
-    graphics.setDepth(sprite.depth + 0.5); // Slightly above sprite
+    graphics.setDepth(1); // Just above body (body=0), below all other parts (eyes=25, etc)
     
     // Convert hex color to RGB
     const color = parseInt(patternColor.replace('#', '0x'));
@@ -56,12 +58,6 @@ export class PatternOverlaySystem {
       case PatternType.FUR:
         this.drawFur(graphics, width, height, color);
         break;
-      case PatternType.PATCHES:
-        this.drawPatches(graphics, width, height, color);
-        break;
-      case PatternType.GRADIENT:
-        this.drawGradient(graphics, width, height, color);
-        break;
       case PatternType.LEOPARD:
         this.drawLeopardSpots(graphics, width, height, color);
         break;
@@ -82,9 +78,6 @@ export class PatternOverlaySystem {
         break;
       case PatternType.FEATHERS:
         this.drawFeathers(graphics, width, height, color);
-        break;
-      case PatternType.MARBLE:
-        this.drawMarble(graphics, width, height, color);
         break;
       case PatternType.WARTS:
         this.drawWarts(graphics, width, height, color);
@@ -141,16 +134,28 @@ export class PatternOverlaySystem {
   }
   
   /**
-   * Scales pattern (reptilian)
+   * Scales pattern (fish/reptilian) - overlapping semicircles
    */
   private drawScales(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
-    graphics.lineStyle(1, color, 1);
-    const scaleSize = Math.max(4, Math.min(width, height) / 15);
+    const scaleSize = Math.max(3, Math.min(width, height) / 25); // Smaller scales
+    const rows = Math.ceil(height / (scaleSize * 0.7)) + 1;
+    const cols = Math.ceil(width / scaleSize) + 1;
     
-    for (let y = 0; y < height; y += scaleSize) {
-      for (let x = 0; x < width; x += scaleSize) {
-        const offset = (y / scaleSize) % 2 === 0 ? 0 : scaleSize / 2;
-        graphics.strokeCircle(x + offset, y, scaleSize / 2);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = col * scaleSize + (row % 2 === 0 ? 0 : scaleSize / 2);
+        const y = row * scaleSize * 0.7; // Overlap rows
+        
+        // Draw scale as filled arc (semicircle)
+        graphics.fillStyle(color, 0.3);
+        graphics.slice(x, y, scaleSize * 0.5, Math.PI, 0, false);
+        graphics.fillPath();
+        
+        // Outline for definition
+        graphics.lineStyle(0.5, color, 0.6);
+        graphics.beginPath();
+        graphics.arc(x, y, scaleSize * 0.5, Math.PI, 0, false);
+        graphics.strokePath();
       }
     }
   }
@@ -221,19 +226,21 @@ export class PatternOverlaySystem {
    * Leopard spots (rosettes)
    */
   private drawLeopardSpots(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
-    graphics.lineStyle(2, color, 1);
-    const spotSize = Math.max(5, Math.min(width, height) / 10);
-    const spots = Math.floor((width * height) / (spotSize * spotSize * 8));
+    graphics.lineStyle(1, color, 0.8); // Thinner line
+    const spotSize = Math.max(3, Math.min(width, height) / 20); // Much smaller spots
+    const spots = Math.floor((width * height) / (spotSize * spotSize * 4)); // More spots
     
     for (let i = 0; i < spots; i++) {
-      const x = Math.random() * width;
-      const y = Math.random() * height;
-      const radius = spotSize * (0.8 + Math.random() * 0.4);
+      // Better distribution with some randomness
+      const x = (Math.random() * 0.9 + 0.05) * width; // Keep away from edges
+      const y = (Math.random() * 0.9 + 0.05) * height;
+      const radius = spotSize * (0.6 + Math.random() * 0.5); // Smaller variation
       // Rosette: circle with small spots inside
       graphics.strokeCircle(x, y, radius);
-      graphics.fillStyle(color, 1);
-      graphics.fillCircle(x - radius * 0.3, y, radius * 0.2);
-      graphics.fillCircle(x + radius * 0.3, y, radius * 0.2);
+      graphics.fillStyle(color, 0.9);
+      graphics.fillCircle(x - radius * 0.4, y - radius * 0.2, radius * 0.15);
+      graphics.fillCircle(x + radius * 0.4, y - radius * 0.2, radius * 0.15);
+      graphics.fillCircle(x, y + radius * 0.3, radius * 0.15);
     }
   }
   
