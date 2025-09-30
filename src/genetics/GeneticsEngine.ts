@@ -1,4 +1,4 @@
-import { MonsterGenetics, MonsterGene, MonsterStats, BreedingResult, MUTATION_RATE, DOMINANT_THRESHOLD, MAX_OFFSPRING, MonsterType, MonsterAppearance, AVAILABLE_PARTS, PROCEDURAL_RANGES, MUTATION_TYPES, MonsterLifeStage, BreedingStatus, MIN_BREEDING_AGE, BREEDING_COOLDOWN } from './GeneticsTypes';
+import { MonsterGenetics, MonsterGene, MonsterStats, BreedingResult, MUTATION_RATE, DOMINANT_THRESHOLD, MAX_OFFSPRING, MonsterType, MonsterAppearance, AVAILABLE_PARTS, PROCEDURAL_RANGES, MUTATION_TYPES, MonsterLifeStage, BreedingStatus, MIN_BREEDING_AGE, BREEDING_COOLDOWN, PatternType, ColorScheme } from './GeneticsTypes';
 
 export class GeneticsEngine {
   private static geneIdCounter = 0;
@@ -28,6 +28,8 @@ export class GeneticsEngine {
       colorGene1: this.createRandomGene(),
       colorGene2: this.createRandomGene(),
       colorGene3: this.createRandomGene(),
+      patternGene: this.createRandomGene(),
+      patternIntensityGene: this.createRandomGene(),
       mutationGene: this.createRandomGene(),
       
       generation,
@@ -140,17 +142,17 @@ export class GeneticsEngine {
     // Use GENETIC values for scale variations
     const scale = 0.5 + (genetics.size.value / 255) * 1.0;
     
+    // Determine color scheme based on genetics
+    const colorScheme = this.determineColorScheme(genetics);
+    
     // Calculate colors from color genes with COLOR HARMONY
-    // Primary color is the base (fully genetic)
-    const primaryColor = this.geneToHexColor(genetics.colorGene1);
-    const baseHue = (genetics.colorGene1.value / 255) * 360;
+    const { primaryColor, secondaryColor, tertiaryColor, patternColor } = this.generateColorScheme(genetics, colorScheme);
     
-    // Secondary color uses analogous harmony (close on color wheel)
-    const secondaryColor = this.geneToHexColor(genetics.colorGene2, baseHue, 'analogous');
+    // Determine pattern type from pattern gene
+    const patternType = this.determinePatternType(genetics.patternGene);
     
-    // Tertiary color uses triadic or complementary harmony (accent color)
-    const useComplementary = genetics.colorGene3.value > 127;
-    const tertiaryColor = this.geneToHexColor(genetics.colorGene3, baseHue, useComplementary ? 'complementary' : 'triadic');
+    // Pattern intensity (0-1 opacity)
+    const patternIntensity = (genetics.patternIntensityGene.value / 255) * 0.7 + 0.1; // 0.1-0.8 range for subtle to bold
     
     // Determine mutations
     const mutations: string[] = [];
@@ -179,9 +181,137 @@ export class GeneticsEngine {
       primaryColor,
       secondaryColor,
       tertiaryColor,
+      patternColor,
+      patternType,
+      patternIntensity,
+      colorScheme,
       hasWings
       // movementType will be determined when monster is created
     };
+  }
+  
+  /**
+   * Determine color scheme type from genetics
+   */
+  private static determineColorScheme(genetics: MonsterGenetics): ColorScheme {
+    const schemes = Object.values(ColorScheme);
+    const index = Math.floor((genetics.colorGene1.dominance * genetics.colorGene2.dominance * genetics.colorGene3.dominance) * schemes.length);
+    return schemes[Math.min(index, schemes.length - 1)];
+  }
+  
+  /**
+   * Generate coordinated color scheme based on type
+   */
+  private static generateColorScheme(genetics: MonsterGenetics, scheme: ColorScheme): {
+    primaryColor: string;
+    secondaryColor: string;
+    tertiaryColor: string;
+    patternColor: string;
+  } {
+    const baseHue = (genetics.colorGene1.value / 255) * 360;
+    
+    switch (scheme) {
+      case ColorScheme.MONOCHROME:
+        // Single hue with lightness variations
+        const baseSat = 60;
+        return {
+          primaryColor: this.hslToHex(baseHue, baseSat, 50),
+          secondaryColor: this.hslToHex(baseHue, baseSat, 35),
+          tertiaryColor: this.hslToHex(baseHue, baseSat, 65),
+          patternColor: this.hslToHex(baseHue, baseSat, 20)
+        };
+        
+      case ColorScheme.ANALOGOUS:
+        // Close colors on wheel (±30°)
+        return {
+          primaryColor: this.geneToHexColor(genetics.colorGene1),
+          secondaryColor: this.geneToHexColor(genetics.colorGene2, baseHue, 'analogous'),
+          tertiaryColor: this.hslToHex((baseHue + 60) % 360, 65, 50),
+          patternColor: this.hslToHex((baseHue - 30 + 360) % 360, 70, 40)
+        };
+        
+      case ColorScheme.COMPLEMENTARY:
+        // Opposite colors
+        return {
+          primaryColor: this.geneToHexColor(genetics.colorGene1),
+          secondaryColor: this.geneToHexColor(genetics.colorGene2, baseHue, 'complementary'),
+          tertiaryColor: this.hslToHex((baseHue + 15) % 360, 65, 55),
+          patternColor: this.hslToHex((baseHue + 180) % 360, 75, 35)
+        };
+        
+      case ColorScheme.TRIADIC:
+        // 120° apart
+        return {
+          primaryColor: this.geneToHexColor(genetics.colorGene1),
+          secondaryColor: this.geneToHexColor(genetics.colorGene2, baseHue, 'triadic'),
+          tertiaryColor: this.hslToHex((baseHue + 240) % 360, 65, 50),
+          patternColor: this.hslToHex((baseHue + 120) % 360, 70, 40)
+        };
+        
+      case ColorScheme.NATURAL:
+        // Earth tones
+        const earthHues = [30, 25, 35, 40, 20]; // Browns, tans
+        return {
+          primaryColor: this.hslToHex(earthHues[Math.floor(genetics.colorGene1.value / 51)], 45, 45),
+          secondaryColor: this.hslToHex(earthHues[Math.floor(genetics.colorGene2.value / 51)], 35, 35),
+          tertiaryColor: this.hslToHex(earthHues[Math.floor(genetics.colorGene3.value / 51)], 40, 55),
+          patternColor: this.hslToHex(30, 50, 25)
+        };
+        
+      case ColorScheme.VIBRANT:
+        // High saturation
+        return {
+          primaryColor: this.hslToHex(baseHue, 95, 55),
+          secondaryColor: this.hslToHex((baseHue + 45) % 360, 90, 50),
+          tertiaryColor: this.hslToHex((baseHue + 90) % 360, 85, 60),
+          patternColor: this.hslToHex((baseHue + 180) % 360, 100, 45)
+        };
+        
+      case ColorScheme.MUTED:
+        // Low saturation
+        return {
+          primaryColor: this.hslToHex(baseHue, 35, 50),
+          secondaryColor: this.hslToHex((baseHue + 30) % 360, 30, 45),
+          tertiaryColor: this.hslToHex((baseHue + 60) % 360, 25, 55),
+          patternColor: this.hslToHex(baseHue, 40, 35)
+        };
+        
+      case ColorScheme.DARK:
+        // Dark colors
+        return {
+          primaryColor: this.hslToHex(baseHue, 60, 25),
+          secondaryColor: this.hslToHex((baseHue + 30) % 360, 55, 20),
+          tertiaryColor: this.hslToHex((baseHue + 60) % 360, 50, 30),
+          patternColor: this.hslToHex(baseHue, 70, 15)
+        };
+        
+      case ColorScheme.LIGHT:
+        // Light colors
+        return {
+          primaryColor: this.hslToHex(baseHue, 60, 75),
+          secondaryColor: this.hslToHex((baseHue + 30) % 360, 55, 70),
+          tertiaryColor: this.hslToHex((baseHue + 60) % 360, 50, 80),
+          patternColor: this.hslToHex(baseHue, 65, 60)
+        };
+        
+      default:
+        // Default analogous
+        return {
+          primaryColor: this.geneToHexColor(genetics.colorGene1),
+          secondaryColor: this.geneToHexColor(genetics.colorGene2, baseHue, 'analogous'),
+          tertiaryColor: this.geneToHexColor(genetics.colorGene3, baseHue, 'triadic'),
+          patternColor: this.hslToHex(baseHue, 70, 35)
+        };
+    }
+  }
+  
+  /**
+   * Determine pattern type from pattern gene
+   */
+  private static determinePatternType(patternGene: MonsterGene): PatternType {
+    const patterns = Object.values(PatternType);
+    const index = Math.floor((patternGene.value / 255) * patterns.length);
+    return patterns[Math.min(index, patterns.length - 1)];
   }
   
   /**
@@ -300,6 +430,8 @@ export class GeneticsEngine {
       colorGene1: this.combineGenes(parent1.colorGene1, parent2.colorGene1),
       colorGene2: this.combineGenes(parent1.colorGene2, parent2.colorGene2),
       colorGene3: this.combineGenes(parent1.colorGene3, parent2.colorGene3),
+      patternGene: this.combineGenes(parent1.patternGene, parent2.patternGene),
+      patternIntensityGene: this.combineGenes(parent1.patternIntensityGene, parent2.patternIntensityGene),
       mutationGene: this.combineGenes(parent1.mutationGene, parent2.mutationGene),
       
       generation,

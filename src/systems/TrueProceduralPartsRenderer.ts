@@ -1,6 +1,7 @@
 import { Scene } from 'phaser';
-import { MonsterAppearance, MonsterLifeStage } from '../genetics/GeneticsTypes';
+import { MonsterAppearance, MonsterLifeStage, PatternType } from '../genetics/GeneticsTypes';
 import { MovementType, MovementTypeDetector } from './MovementTypeDetector';
+import { PatternOverlaySystem } from './PatternOverlaySystem';
 
 /**
  * TRUE Spore-like Procedural parts Renderer
@@ -8,6 +9,7 @@ import { MovementType, MovementTypeDetector } from './MovementTypeDetector';
  */
 export class TrueProceduralPartsRenderer {
   private scene: Scene;
+  private patternOverlaySystem: PatternOverlaySystem;
   
   // EXCLUSION LIST - heads we don't want to use
   private excludedHeads = [
@@ -93,8 +95,9 @@ export class TrueProceduralPartsRenderer {
   
   constructor(scene: Scene) {
     this.scene = scene;
+    this.patternOverlaySystem = new PatternOverlaySystem(scene);
     // Parts are now preloaded in GameScene.preload()
-    console.log('TrueProceduralPartsRenderer: Ready to create procedural monsters!');
+    console.log('TrueProceduralPartsRenderer: Ready to create procedural monsters with patterns!');
   }
   
   /**
@@ -401,13 +404,13 @@ export class TrueProceduralPartsRenderer {
     // Position eyes/face in the UPPER portion of the head (not center)
     let eyeY = -10; // Default position
     if (headSprite) {
-      // Eyes should be in the upper portion of the head
+      // Eyes should be in the upper portion of the head - VERY HIGH!
       // Calculate based on head sprite's actual displayed size after scaling
       const headTop = headSprite.y - (headSprite.displayHeight / 2);
       const headBottom = headSprite.y + (headSprite.displayHeight / 2);
-      // Position eyes at 20% down from the top (upper fifth)
-      eyeY = headTop + (headSprite.displayHeight * 0.20);
-      console.log(`👁️ Positioning eyes in upper head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
+      // Position eyes at 10% down from the top (very top of head)
+      eyeY = headTop + (headSprite.displayHeight * 0.10);
+      console.log(`👁️ Positioning eyes VERY HIGH on head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
     }
     let eyesAdded = false;
     let faceAdded = false;
@@ -869,6 +872,38 @@ export class TrueProceduralPartsRenderer {
     }
     
     // Weapons removed - not needed for this game
+    
+    // Apply pattern overlays to body and head (genetically inherited patterns)
+    if (appearance.patternType && appearance.patternType !== PatternType.NONE && appearance.patternIntensity && appearance.patternColor) {
+      // Apply pattern to body
+      if (bodySprite) {
+        const bodyPattern = this.patternOverlaySystem.applyPattern(
+          bodySprite,
+          appearance.patternType,
+          appearance.patternColor,
+          appearance.patternIntensity
+        );
+        if (bodyPattern) {
+          container.add(bodyPattern);
+          (container as any).bodyPattern = bodyPattern; // Store for cleanup
+          console.log(`🎨 Applied ${appearance.patternType} pattern to body (intensity: ${(appearance.patternIntensity * 100).toFixed(0)}%)`);
+        }
+      }
+      
+      // Apply pattern to head (slightly lower intensity for subtle variety)
+      if (headSprite) {
+        const headPattern = this.patternOverlaySystem.applyPattern(
+          headSprite,
+          appearance.patternType,
+          appearance.patternColor,
+          appearance.patternIntensity * 0.8 // Slightly less intense on head
+        );
+        if (headPattern) {
+          container.add(headPattern);
+          (container as any).headPattern = headPattern; // Store for cleanup
+        }
+      }
+    }
     
     // Apply life stage scaling - 1.5-2 blocks tall (16px = 1 block)
     // Target: 24-32px tall monsters = 0.06-0.08 scale for ~400px sprites

@@ -37,6 +37,8 @@ export interface MonsterGenetics {
   colorGene1: MonsterGene;     // Primary color genetics
   colorGene2: MonsterGene;     // Secondary color genetics
   colorGene3: MonsterGene;     // Pattern/accent color genetics
+  patternGene: MonsterGene;    // Pattern type (stripes, spots, scales, etc.)
+  patternIntensityGene: MonsterGene; // Pattern visibility/opacity
   mutationGene: MonsterGene;   // Chance for special mutations
   
   // Lineage tracking
@@ -83,10 +85,46 @@ export interface MonsterAppearance {
   secondaryColor: string;
   tertiaryColor: string;
   patternColor?: string; // Optional pattern overlay color
+  patternType?: PatternType; // Type of pattern (stripes, spots, etc.)
+  patternIntensity?: number; // 0-1 opacity of pattern
+  colorScheme?: ColorScheme; // Overall color scheme type
   scale: number;
   mutations: string[];
   movementType?: MovementType; // Procedural movement style
   hasWings?: boolean; // For wing-based movement
+}
+
+// Pattern types inspired by nature
+export enum PatternType {
+  NONE = 'none',
+  STRIPES_HORIZONTAL = 'stripes_horizontal',
+  STRIPES_VERTICAL = 'stripes_vertical',
+  SPOTS = 'spots',
+  SCALES = 'scales',
+  FUR = 'fur',
+  PATCHES = 'patches',
+  GRADIENT = 'gradient',
+  MARBLE = 'marble',
+  LEOPARD = 'leopard',
+  TIGER = 'tiger',
+  ZEBRA = 'zebra',
+  SNAKE = 'snake',
+  FISH_SCALES = 'fish_scales',
+  LIZARD = 'lizard',
+  FEATHERS = 'feathers'
+}
+
+// Color scheme types
+export enum ColorScheme {
+  MONOCHROME = 'monochrome',       // Single color with variations
+  ANALOGOUS = 'analogous',         // Close colors on wheel
+  COMPLEMENTARY = 'complementary', // Opposite colors
+  TRIADIC = 'triadic',            // Three evenly spaced
+  NATURAL = 'natural',            // Earth tones
+  VIBRANT = 'vibrant',            // Saturated colors
+  MUTED = 'muted',                // Desaturated colors
+  DARK = 'dark',                  // Dark variations
+  LIGHT = 'light'                 // Light variations
 }
 
 export enum MonsterType {
