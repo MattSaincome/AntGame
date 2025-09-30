@@ -1012,7 +1012,10 @@ export class Monster {
 
   private canBreed(): boolean {
     const status = GeneticsEngine.getBreedingStatus(this.genetics);
-    return status === BreedingStatus.READY && this.energy > 60;
+    // Monsters must be at least 30 seconds old before they can breed (explore first!)
+    const age = Date.now() - this.genetics.birthTime;
+    const minBreedingAge = 30000; // 30 seconds
+    return status === BreedingStatus.READY && this.energy > 60 && age >= minBreedingAge;
   }
   
   /**

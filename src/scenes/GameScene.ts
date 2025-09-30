@@ -676,60 +676,109 @@ export class GameScene extends Phaser.Scene {
         }
         */
         
-        // === SPRITE ANIMATIONS ===
-        const isMoving = Math.abs(monster.position.vx) > 0.1 || Math.abs(monster.position.vy) > 0.1;
-        const isMining = monster.state === MonsterState.MINING;
-        const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
-        const isFalling = monster.position.vy > 100;
-        const isJumping = monster.position.vy < -100;
-        const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
-        
-        // Get base scale
-        const baseScale = Math.abs(monster.sprite.scaleX);
-        
-        // Walking bounce animation
-        if (isWalking) {
-          const bounceSpeed = Math.abs(monster.position.vx) * 0.01;
-          const bounce = Math.sin(this.time.now * bounceSpeed) * 0.03;
-          monster.sprite.setScale(baseScale * (1 + bounce), baseScale * (1 - bounce * 0.5));
+        // === INDIVIDUAL BODY PART ANIMATIONS ===
+        if (monster.sprite instanceof Phaser.GameObjects.Container) {
+          const container = monster.sprite as Phaser.GameObjects.Container;
           
-          // Slight tilt when moving
-          const tilt = (monster.position.vx > 0 ? 0.05 : -0.05);
-          monster.sprite.rotation = tilt;
-        }
-        // Jumping squash/stretch
-        else if (isJumping) {
-          monster.sprite.setScale(baseScale * 0.85, baseScale * 1.15); // Tall and thin
-          monster.sprite.rotation = monster.position.vx * 0.0005; // Slight lean in direction
-        }
-        // Falling squash/stretch
-        else if (isFalling) {
-          monster.sprite.setScale(baseScale * 1.1, baseScale * 0.9); // Wide and flat
-          monster.sprite.rotation = 0;
-        }
-        // Mining animation (pick swing)
-        else if (isMining) {
-          const swingSpeed = 0.01;
-          const swing = Math.sin(this.time.now * swingSpeed) * 0.15;
-          monster.sprite.rotation = swing;
-          monster.sprite.setScale(baseScale, baseScale);
-        }
-        // Carrying - slightly squashed from weight
-        else if (isCarrying) {
-          monster.sprite.setScale(baseScale * 1.05, baseScale * 0.95); // Compressed
-          monster.sprite.rotation = 0;
-        }
-        // Idle - return to normal
-        else {
-          monster.sprite.setScale(baseScale, baseScale);
-          monster.sprite.rotation = 0;
-        }
-        
-        // Flip sprite based on movement direction
-        if (monster.position.vx < -5) {
-          monster.sprite.setScale(-Math.abs(monster.sprite.scaleX), monster.sprite.scaleY);
-        } else if (monster.position.vx > 5) {
-          monster.sprite.setScale(Math.abs(monster.sprite.scaleX), monster.sprite.scaleY);
+          // Get individual body parts
+          const leftLeg = container.getByName('leftLeg') as Phaser.GameObjects.Sprite;
+          const rightLeg = container.getByName('rightLeg') as Phaser.GameObjects.Sprite;
+          const leftArm = container.getByName('leftArm') as Phaser.GameObjects.Sprite;
+          const rightArm = container.getByName('rightArm') as Phaser.GameObjects.Sprite;
+          const body = container.getByName('body') as Phaser.GameObjects.Sprite;
+          const head = container.getByName('head') as Phaser.GameObjects.Sprite;
+          
+          const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
+          const isJumping = monster.position.vy < -100;
+          const isFalling = monster.position.vy > 100;
+          const isMining = monster.state === MonsterState.MINING;
+          const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
+          
+          // WALKING ANIMATION - alternating leg swing
+          if (isWalking && leftLeg && rightLeg) {
+            const walkSpeed = Math.abs(monster.position.vx) * 0.015;
+            const walkCycle = Math.sin(this.time.now * walkSpeed);
+            
+            // Legs swing back and forth (opposite)
+            leftLeg.rotation = walkCycle * 0.3; // -0.3 to 0.3 radians
+            rightLeg.rotation = -walkCycle * 0.3;
+            
+            // Arms swing opposite to legs
+            if (leftArm) leftArm.rotation = -walkCycle * 0.2;
+            if (rightArm) rightArm.rotation = walkCycle * 0.2;
+            
+            // Body bobs up and down
+            if (body) {
+              const bob = Math.abs(Math.sin(this.time.now * walkSpeed * 2)) * 2;
+              body.y = bob - 1;
+            }
+            
+            // Head tilts slightly
+            if (head) head.rotation = walkCycle * 0.05;
+          }
+          // JUMPING - legs tuck up
+          else if (isJumping && leftLeg && rightLeg) {
+            leftLeg.rotation = -0.5; // Tuck up
+            rightLeg.rotation = -0.5;
+            if (leftArm) leftArm.rotation = -0.3; // Arms up
+            if (rightArm) rightArm.rotation = -0.3;
+            if (head) head.rotation = 0;
+            if (body) body.y = 0;
+          }
+          // FALLING - legs dangle
+          else if (isFalling && leftLeg && rightLeg) {
+            leftLeg.rotation = 0.3; // Dangle down
+            rightLeg.rotation = 0.3;
+            if (leftArm) leftArm.rotation = 0.4; // Arms flail
+            if (rightArm) rightArm.rotation = 0.4;
+            if (head) head.rotation = 0;
+            if (body) body.y = 0;
+          }
+          // MINING - arm swing
+          else if (isMining) {
+            const swingSpeed = 0.01;
+            const swing = Math.sin(this.time.now * swingSpeed);
+            if (rightArm) rightArm.rotation = swing * 0.8 - 0.4; // Big swing
+            if (leftArm) leftArm.rotation = swing * 0.2;
+            if (body) {
+              body.rotation = swing * 0.1;
+              body.y = 0;
+            }
+            if (leftLeg) leftLeg.rotation = 0;
+            if (rightLeg) rightLeg.rotation = 0;
+            if (head) head.rotation = swing * 0.05;
+          }
+          // CARRYING - lean forward
+          else if (isCarrying) {
+            if (leftArm) leftArm.rotation = -0.3; // Hold resource
+            if (rightArm) rightArm.rotation = -0.3;
+            if (body) {
+              body.rotation = 0.1; // Lean forward
+              body.y = 1; // Lower from weight
+            }
+            if (leftLeg) leftLeg.rotation = 0.1;
+            if (rightLeg) rightLeg.rotation = 0.1;
+            if (head) head.rotation = -0.1; // Look down at resource
+          }
+          // IDLE - reset to neutral
+          else {
+            if (leftLeg) leftLeg.rotation = 0;
+            if (rightLeg) rightLeg.rotation = 0;
+            if (leftArm) leftArm.rotation = 0;
+            if (rightArm) rightArm.rotation = 0;
+            if (body) {
+              body.rotation = 0;
+              body.y = 0;
+            }
+            if (head) head.rotation = 0;
+          }
+          
+          // Flip container based on movement direction
+          if (monster.position.vx < -5) {
+            container.scaleX = -Math.abs(container.scaleX);
+          } else if (monster.position.vx > 5) {
+            container.scaleX = Math.abs(container.scaleX);
+          }
         }
       }
       
