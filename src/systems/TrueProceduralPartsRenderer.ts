@@ -338,7 +338,7 @@ export class TrueProceduralPartsRenderer {
       if (this.scene.textures.exists(headKey)) {
         console.log(`✅ Head texture found: ${headKey} (attempts: ${headAttempts})`);
         // Position head ON TOP of body, like a neck connection
-        const headY = bodySprite ? -bodySprite.height * 0.4 : 0; // Connect at 40% of body height
+        const headY = bodySprite ? -bodySprite.height * 0.5 : 0; // Connect at 50% of body height (higher up)
         headSprite = this.scene.add.sprite(0, headY, headKey);
         this.applyPartTint(headSprite, appearance.secondaryColor);
         headSprite.setName('head');
@@ -401,12 +401,12 @@ export class TrueProceduralPartsRenderer {
     // Position eyes/face in the UPPER portion of the head (not center)
     let eyeY = -10; // Default position
     if (headSprite) {
-      // Eyes should be in the upper third of the head
+      // Eyes should be in the upper portion of the head
       // Calculate based on head sprite's actual displayed size after scaling
       const headTop = headSprite.y - (headSprite.displayHeight / 2);
       const headBottom = headSprite.y + (headSprite.displayHeight / 2);
-      // Position eyes at 30% down from the top (upper third)
-      eyeY = headTop + (headSprite.displayHeight * 0.30);
+      // Position eyes at 20% down from the top (upper fifth)
+      eyeY = headTop + (headSprite.displayHeight * 0.20);
       console.log(`👁️ Positioning eyes in upper head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
     }
     let eyesAdded = false;
@@ -537,14 +537,14 @@ export class TrueProceduralPartsRenderer {
       else if (eyeCount === 4) eyeScale = 0.4;
       else if (eyeCount >= 5) eyeScale = 0.35;
       
-      // Scale eyes relative to head size (eyes should be ~15% of head width)
+      // Scale eyes relative to head size (eyes should be ~10% of head width)
       const singleEyeTexture = this.scene.textures.get(eyeTextureKey);
       const eyeTextureWidth = singleEyeTexture.getSourceImage().width;
-      const targetEyeWidth = headWidth * 0.15; // 15% of head width per eye
+      const targetEyeWidth = headWidth * 0.10; // 10% of head width per eye (reduced from 15%)
       eyeScale = targetEyeWidth / eyeTextureWidth;
       
-      // Clamp scale to reasonable bounds
-      eyeScale = Math.max(0.2, Math.min(1.0, eyeScale));
+      // Clamp scale to reasonable bounds (reduced minimum from 0.2 to 0.1)
+      eyeScale = Math.max(0.1, Math.min(0.8, eyeScale));
       
       console.log(`👁️ Creating ${eyeCount} eyes with scale ${eyeScale.toFixed(2)}`);
       
@@ -872,7 +872,7 @@ export class TrueProceduralPartsRenderer {
     
     // Apply life stage scaling - 1.5-2 blocks tall (16px = 1 block)
     // Target: 24-32px tall monsters = 0.06-0.08 scale for ~400px sprites
-    let baseScale = 0.07; // Balanced size for 1.5-2 block height
+    let baseScale = 0.0735; // 5% bigger (was 0.07) for better visibility
     let scale = baseScale;
     
     switch (lifeStage) {
