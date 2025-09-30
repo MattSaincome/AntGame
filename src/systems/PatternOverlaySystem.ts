@@ -30,7 +30,7 @@ export class PatternOverlaySystem {
     const width = sprite.displayWidth;
     const height = sprite.displayHeight;
     
-    // Create graphics overlay
+    // Create graphics overlay CONSTRAINED to sprite bounds
     const graphics = this.scene.add.graphics();
     graphics.setPosition(sprite.x - width / 2, sprite.y - height / 2);
     graphics.setAlpha(intensity);
@@ -85,6 +85,15 @@ export class PatternOverlaySystem {
         break;
       case PatternType.MARBLE:
         this.drawMarble(graphics, width, height, color);
+        break;
+      case PatternType.WARTS:
+        this.drawWarts(graphics, width, height, color);
+        break;
+      case PatternType.WORMS:
+        this.drawWorms(graphics, width, height, color);
+        break;
+      case PatternType.TUMORS:
+        this.drawTumors(graphics, width, height, color);
         break;
       default:
         break;
@@ -194,7 +203,7 @@ export class PatternOverlaySystem {
   }
   
   /**
-   * Gradient pattern (smooth color transition)
+   * Gradient pattern (smooth color transition) - CONSTRAINED to sprite bounds
    */
   private drawGradient(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
     const steps = 10;
@@ -203,7 +212,8 @@ export class PatternOverlaySystem {
     for (let i = 0; i < steps; i++) {
       const alpha = 1 - (i / steps);
       graphics.fillStyle(color, alpha);
-      graphics.fillRect(0, i * stepHeight, width, stepHeight + 1);
+      // Ensure gradient stays within bounds
+      graphics.fillRect(0, i * stepHeight, width, Math.min(stepHeight + 1, height - i * stepHeight));
     }
   }
   
@@ -396,6 +406,157 @@ export class PatternOverlaySystem {
       }
       
       graphics.strokePath();
+    }
+  }
+  
+  /**
+   * Warts pattern - raised bumpy growths (GROSS & DRAMATIC)
+   */
+  private drawWarts(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
+    graphics.fillStyle(color, 1);
+    const wartCount = 15 + Math.floor(Math.random() * 20); // More warts
+    
+    for (let i = 0; i < wartCount; i++) {
+      // Keep warts within bounds with padding
+      const padding = width * 0.05;
+      const x = padding + Math.random() * (width - padding * 2);
+      const y = padding + Math.random() * (height - padding * 2);
+      const wartSize = (width * 0.04) + Math.random() * (width * 0.08); // 4-12% of width
+      
+      // Main wart body - raised bump
+      graphics.fillCircle(x, y, wartSize);
+      
+      // Much darker center for gross effect
+      const darkerColor = ((color >> 2) & 0x3F3F3F); // Darken by 75%
+      graphics.fillStyle(darkerColor, 1);
+      graphics.fillCircle(x, y, wartSize * 0.5);
+      
+      // Random small bumps around it for texture
+      graphics.fillStyle(color, 0.8);
+      for (let j = 0; j < 3 + Math.floor(Math.random() * 4); j++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = wartSize * (0.6 + Math.random() * 0.4);
+        const bumpX = x + Math.cos(angle) * distance;
+        const bumpY = y + Math.sin(angle) * distance;
+        const bumpSize = wartSize * (0.25 + Math.random() * 0.35);
+        graphics.fillCircle(bumpX, bumpY, bumpSize);
+      }
+      
+      // Reset color for next wart
+      graphics.fillStyle(color, 1);
+    }
+  }
+  
+  /**
+   * Worms pattern - writhing parasites in the skin (GROSS & DRAMATIC)
+   */
+  private drawWorms(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
+    const wormCount = 12 + Math.floor(Math.random() * 16); // More worms
+    const wormThickness = Math.max(2, width * 0.015); // Thicker worms (1.5% of width)
+    
+    for (let i = 0; i < wormCount; i++) {
+      // Start within bounds with padding
+      const padding = width * 0.1;
+      const startX = padding + Math.random() * (width - padding * 2);
+      const startY = padding + Math.random() * (height - padding * 2);
+      const wormLength = width * (0.15 + Math.random() * 0.25); // 15-40% of width
+      const segments = 8 + Math.floor(Math.random() * 8);
+      
+      let x = startX;
+      let y = startY;
+      let angle = Math.random() * Math.PI * 2;
+      
+      // Worm body - wriggling motion with thick lines
+      graphics.lineStyle(wormThickness, color, 0.9);
+      graphics.beginPath();
+      graphics.moveTo(startX, startY);
+      
+      for (let s = 0; s < segments; s++) {
+        angle += (Math.random() - 0.5) * 1.5; // More wiggle
+        const segmentLength = wormLength / segments;
+        x += Math.cos(angle) * segmentLength;
+        y += Math.sin(angle) * segmentLength;
+        
+        // Soft clamping - slow down as approaching edges
+        const edgeMargin = width * 0.05;
+        if (x < edgeMargin) x = edgeMargin + Math.random() * edgeMargin;
+        if (x > width - edgeMargin) x = width - edgeMargin - Math.random() * edgeMargin;
+        if (y < edgeMargin) y = edgeMargin + Math.random() * edgeMargin;
+        if (y > height - edgeMargin) y = height - edgeMargin - Math.random() * edgeMargin;
+        
+        graphics.lineTo(x, y);
+      }
+      
+      graphics.strokePath();
+      
+      // Add gross detail - large visible bulges along the worm
+      const darkerColor = ((color >> 1) & 0x7F7F7F);
+      graphics.fillStyle(darkerColor, 0.9);
+      const bulges = 3 + Math.floor(Math.random() * 4);
+      for (let b = 0; b < bulges; b++) {
+        const t = (b + 1) / (bulges + 1);
+        const bulgeX = startX + (x - startX) * t;
+        const bulgeY = startY + (y - startY) * t;
+        const bulgeSize = wormThickness * (1.5 + Math.random() * 1);
+        graphics.fillCircle(bulgeX, bulgeY, bulgeSize);
+      }
+    }
+  }
+  
+  /**
+   * Tumors pattern - irregular growths (SICK AND SAD & DRAMATIC)
+   */
+  private drawTumors(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
+    graphics.fillStyle(color, 0.9);
+    const tumorCount = 6 + Math.floor(Math.random() * 8); // More tumors
+    
+    for (let i = 0; i < tumorCount; i++) {
+      // Keep tumors within bounds
+      const padding = width * 0.08;
+      const x = padding + Math.random() * (width - padding * 2);
+      const y = padding + Math.random() * (height - padding * 2);
+      const tumorSize = width * (0.06 + Math.random() * 0.10); // 6-16% of width
+      
+      // Irregular tumor shape - multiple overlapping circles
+      const lobes = 3 + Math.floor(Math.random() * 4);
+      for (let l = 0; l < lobes; l++) {
+        const angle = (l / lobes) * Math.PI * 2 + Math.random() * 0.5;
+        const distance = tumorSize * (0.3 + Math.random() * 0.4);
+        const lobeX = x + Math.cos(angle) * distance;
+        const lobeY = y + Math.sin(angle) * distance;
+        const lobeSize = tumorSize * (0.6 + Math.random() * 0.5);
+        
+        // Main lobe
+        graphics.fillCircle(lobeX, lobeY, lobeSize);
+      }
+      
+      // Dark veiny center for sick appearance
+      const darkColor = ((color >> 2) & 0x3F3F3F); // Much darker
+      graphics.fillStyle(darkColor, 1);
+      graphics.fillCircle(x, y, tumorSize * 0.3);
+      
+      // Veins radiating from tumor - thicker and more visible
+      const veinThickness = Math.max(1, width * 0.008);
+      graphics.lineStyle(veinThickness, darkColor, 0.7);
+      const veins = 4 + Math.floor(Math.random() * 5);
+      for (let v = 0; v < veins; v++) {
+        const veinAngle = (v / veins) * Math.PI * 2 + Math.random() * 0.4;
+        const veinLength = tumorSize * (1.2 + Math.random() * 1.8);
+        let endX = x + Math.cos(veinAngle) * veinLength;
+        let endY = y + Math.sin(veinAngle) * veinLength;
+        
+        // Clamp veins to stay within bounds
+        endX = Math.max(0, Math.min(width, endX));
+        endY = Math.max(0, Math.min(height, endY));
+        
+        graphics.beginPath();
+        graphics.moveTo(x, y);
+        graphics.lineTo(endX, endY);
+        graphics.strokePath();
+      }
+      
+      // Reset for next tumor
+      graphics.fillStyle(color, 0.9);
     }
   }
   

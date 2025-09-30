@@ -111,7 +111,10 @@ export enum PatternType {
   SNAKE = 'snake',
   FISH_SCALES = 'fish_scales',
   LIZARD = 'lizard',
-  FEATHERS = 'feathers'
+  FEATHERS = 'feathers',
+  WARTS = 'warts',
+  WORMS = 'worms',
+  TUMORS = 'tumors'
 }
 
 // Color scheme types
