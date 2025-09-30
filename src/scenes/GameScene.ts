@@ -86,55 +86,8 @@ export class GameScene extends Phaser.Scene {
     this.seedPartLoader = new SeedBasedPartLoader(this);
     // Don't load parts twice - dynamic loader handles it
     
-    // All monster parts are now handled by SeedBasedPartLoader
-    // This prevents 404 errors by only loading verified parts
-    
-    // Load only the spine images that ACTUALLY exist
-    this.loadActualSpineImages();
-  }
-  
-  private loadActualSpineImages(): void {
-    console.log('Loading actual spine images that exist...');
-    
-    // Define what actually exists based on the copy operation
-    // ONLY include files that actually exist to prevent 404s
-    const spineImageMap = {
-      // Char01 and Char02 have the actual files
-      'Char01': ['BackHand', 'Body', 'Eye01', 'Eye02', 'EyeBrow01', 'EyeBrow02', 'FrontHand', 'Hair', 'Hand_B', 'Hand_F', 'Ice', 'Leg', 'Leg_B', 'Leg_F', 'Mouth', 'Poisoned', 'Smoked2', 'Splash', 'smoked'],
-      'Char02': ['BackHand', 'Body', 'Eye01', 'Eye02', 'EyeBrow01', 'EyeBrow02', 'Eyebrow', 'FrontHand', 'Hair', 'Hand_B', 'Hand_F', 'Ice', 'Leg', 'Leg_B', 'Leg_F', 'Mouth', 'Poisoned', 'Smoked2', 'Splash', 'smoked'],
-      'Char03': ['BackHand']
-      // Remove all the Monster entries that don't actually exist
-    };
-    
-    // Load each image with proper key
-    let loadCount = 0;
-    Object.entries(spineImageMap).forEach(([folder, parts]) => {
-      parts.forEach(part => {
-        const key = `spine_${folder.toLowerCase()}_${part.toLowerCase()}`;
-        const path = `monster-parts/spine_images/Spine/${folder}/${part}.png`;
-        this.load.image(key, path);
-        loadCount++;
-      });
-    });
-    
-    console.log(`Loading ${loadCount} actual spine images!`);
-    
-    // Set up error handler to silently ignore missing files
-    this.load.on('loaderror', (file: any) => {
-      // Silently ignore 404s - not all monsters have all parts
-      // This prevents console spam from missing optional parts
-      console.debug(`[Silent 404] Missing optional asset: ${file.key}`);
-    });
-    
-    // Also silence Phaser's default error logging for missing textures
-    this.load.on('filecomplete', (key: string) => {
-      // Successfully loaded
-    });
-    
-    this.load.on('filefailed', (file: any) => {
-      // Silently handle failed loads
-      return;
-    });
+    // All 684 monster parts from 91 monsters are now loaded via DynamicPartLoader
+    // No need for separate spine image loading - they're part of the main batch
   }
 
   private createMonsterTexture() {

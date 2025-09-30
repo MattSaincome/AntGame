@@ -398,13 +398,16 @@ export class TrueProceduralPartsRenderer {
     }
     
     // ADD FACE OR EYES/MOUTH (mutually exclusive)
-    // Position eyes/face ON the head's center, accounting for actual displayed size after scaling
+    // Position eyes/face in the UPPER portion of the head (not center)
     let eyeY = -10; // Default position
     if (headSprite) {
-      // Eyes should be at the head's Y position (center of head sprite)
-      // No offset needed since headSprite.y is already at the head's center
-      eyeY = headSprite.y;
-      console.log(`👁️ Positioning eyes at head center: Y=${eyeY.toFixed(1)}`);
+      // Eyes should be in the upper third of the head
+      // Calculate based on head sprite's actual displayed size after scaling
+      const headTop = headSprite.y - (headSprite.displayHeight / 2);
+      const headBottom = headSprite.y + (headSprite.displayHeight / 2);
+      // Position eyes at 30% down from the top (upper third)
+      eyeY = headTop + (headSprite.displayHeight * 0.30);
+      console.log(`👁️ Positioning eyes in upper head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
     }
     let eyesAdded = false;
     let faceAdded = false;

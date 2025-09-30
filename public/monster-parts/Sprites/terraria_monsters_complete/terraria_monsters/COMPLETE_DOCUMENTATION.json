@@ -1,0 +1,152 @@
+{
+  "Terraria-Style Monster Collection": {
+    "Overview": "Professional pixel art monster sprites for 2D games",
+    "Total_Assets": {
+      "Monster_Types": 6,
+      "Evolution_Stages": 10,
+      "Total_Unique_Monsters": 60,
+      "Modular_Parts": "300+ individual sprite components",
+      "Color_Variations_Possible": "Infinite with palette swapping",
+      "Pattern_Overlays": [
+        "stripes",
+        "spots",
+        "scales",
+        "tribal",
+        "energy",
+        "crystal"
+      ]
+    },
+    "Monster_Types": {
+      "1_Dragon": {
+        "Description": "Classic dragon evolution from hatchling to ancient",
+        "Color_Progression": "Green \u2192 Gold \u2192 Red \u2192 Purple",
+        "Special_Features": "Wings appear at stage 3, horns grow",
+        "Parts": [
+          "head",
+          "body",
+          "wings",
+          "legs",
+          "tail"
+        ]
+      },
+      "2_Slime": {
+        "Description": "Gelatinous creature evolving to King Slime",
+        "Color_Progression": "Blue \u2192 Purple \u2192 Magenta",
+        "Special_Features": "Translucent effect, crown at final stage",
+        "Parts": [
+          "body (includes face)"
+        ]
+      },
+      "3_Demon": {
+        "Description": "Imp evolving into demon lord",
+        "Color_Progression": "Light red \u2192 Dark red \u2192 Black",
+        "Special_Features": "Horns grow, wings at stage 3, glowing eyes",
+        "Parts": [
+          "head",
+          "body",
+          "wings",
+          "tail",
+          "arms"
+        ]
+      },
+      "4_Golem": {
+        "Description": "Stone construct to crystal guardian",
+        "Material_Progression": "Stone \u2192 Iron \u2192 Crystal \u2192 Energy",
+        "Special_Features": "Power core, runes, gem eyes",
+        "Parts": [
+          "head",
+          "body",
+          "arms",
+          "legs"
+        ]
+      },
+      "5_Undead": {
+        "Description": "Skeleton evolving to lich king",
+        "Progression": "Bones \u2192 Armored \u2192 Crowned Lich",
+        "Special_Features": "Glowing eyes, magical weapons",
+        "Parts": [
+          "head",
+          "body",
+          "arms",
+          "weapon"
+        ]
+      },
+      "6_Beast": {
+        "Description": "Wolf pup to dire werewolf",
+        "Form_Change": "Quadruped \u2192 Bipedal at stage 6",
+        "Special_Features": "Fur texture, muscle definition",
+        "Parts": [
+          "head",
+          "body",
+          "legs",
+          "tail",
+          "arms (werewolf only)"
+        ]
+      }
+    },
+    "Implementation_Guide": {
+      "Sprite_Specifications": {
+        "Base_Resolution": "32x32 pixels",
+        "Display_Resolution": "64x64 or higher (use nearest neighbor scaling)",
+        "Color_Depth": "32-bit RGBA",
+        "Style": "Terraria-inspired pixel art with shading"
+      },
+      "Assembly_Instructions": {
+        "Layer_Order": [
+          "1. Background effects/auras",
+          "2. Tail (behind body)",
+          "3. Wings (behind body)",
+          "4. Body (center piece)",
+          "5. Legs (attached to body)",
+          "6. Arms (side attachments)",
+          "7. Head (on top)",
+          "8. Weapons/accessories (front)"
+        ],
+        "Positioning_Guide": {
+          "Head": "Top center of body, y-offset: -8px",
+          "Wings": "Behind body, x-offset: -16px",
+          "Tail": "Behind body, x-offset: +16px",
+          "Arms": "Side of body, match shoulder position",
+          "Legs": "Below body, y-offset: +8px"
+        }
+      },
+      "Breeding_System": {
+        "Part_Inheritance": "Each part has 50% chance from each parent",
+        "Color_Blending": "RGB values average between parents",
+        "Size_Inheritance": "Average of parent evolution stages",
+        "Mutation_Rate": "5% chance for random trait",
+        "Special_Combinations": {
+          "Dragon + Demon": "Infernal Dragon (fire/shadow)",
+          "Beast + Undead": "Undead Werewolf",
+          "Golem + Slime": "Crystal Slime",
+          "Any + Any": "Valid combination possible"
+        }
+      }
+    },
+    "Animation_Guidelines": {
+      "Frame_Counts": {
+        "Idle": "4-6 frames",
+        "Walk": "8 frames",
+        "Run": "6 frames",
+        "Attack": "8-10 frames",
+        "Special": "12 frames"
+      },
+      "Timing": "60 FPS base, adjust as needed"
+    },
+    "Expansion_Guide": {
+      "Adding_New_Monsters": [
+        "1. Create base sprite at 32x32",
+        "2. Use 8-color palette with shading",
+        "3. Create 10 evolution stages",
+        "4. Split into modular parts",
+        "5. Test assembly combinations"
+      ],
+      "Creating_Variations": [
+        "1. Palette swap for color variants",
+        "2. Add pattern overlays",
+        "3. Mirror sprites for direction",
+        "4. Scale parts for size variants"
+      ]
+    }
+  }
+}

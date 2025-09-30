@@ -1,0 +1,69 @@
+{
+  "Monster Assembly Guide": {
+    "overview": "Each monster is composed of modular parts that can be mixed and matched",
+    "layer_order": [
+      "1. Background accessories (auras, effects)",
+      "2. Tail (behind body)",
+      "3. Wings (behind body)",
+      "4. Body (main sprite)",
+      "5. Arms/Legs (attached to body)",
+      "6. Head (on top of body)",
+      "7. Foreground accessories (weapons, items)"
+    ],
+    "positioning": {
+      "head": {
+        "x": 0,
+        "y": -8,
+        "anchor": "bottom-center"
+      },
+      "body": {
+        "x": 0,
+        "y": 0,
+        "anchor": "center"
+      },
+      "legs": {
+        "x": 0,
+        "y": 8,
+        "anchor": "top-center"
+      },
+      "wings": {
+        "x": -16,
+        "y": 0,
+        "anchor": "center"
+      },
+      "tail": {
+        "x": 16,
+        "y": 0,
+        "anchor": "left-center"
+      }
+    },
+    "color_variations": {
+      "method": "Use hue shifting or palette swapping",
+      "variations": [
+        "red",
+        "blue",
+        "green",
+        "purple",
+        "gold",
+        "shadow",
+        "ice",
+        "fire",
+        "nature",
+        "cosmic"
+      ]
+    },
+    "pattern_overlays": {
+      "stripes": "Horizontal bands of alternate color",
+      "spots": "Random circular patches",
+      "scales": "Overlapping diamond pattern",
+      "tribal": "Angular decorative marks"
+    },
+    "breeding_rules": {
+      "head": "50% chance from each parent",
+      "body": "50% chance from each parent",
+      "colors": "Blend between parent colors",
+      "size": "Average of parent sizes",
+      "special_traits": "5% mutation chance"
+    }
+  }
+}
