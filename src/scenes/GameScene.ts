@@ -4,21 +4,22 @@ import { Tile, TileType, TILE_PROPERTIES, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT }
 import { Monster, MonsterState, MonsterAction } from '../entities/Monster';
 import { MonsterSprite } from '../entities/MonsterSprite';
 import { GeneticsEngine } from '../genetics/GeneticsEngine';
-import { MonsterType } from '../genetics/GeneticsTypes';
 import { ResourceChunkManager } from '../entities/ResourceChunk';
 import { ColonyHive } from '../entities/ColonyHive';
 import { MiningEffects } from '../effects/MiningEffects';
 import { ResourceTracker } from '../ui/ResourceTracker';
 import { PheromoneSystem, PheromoneType } from '../systems/PheromoneSystem';
-import { spriteManager } from '../systems/SpriteManager';
-import { bugMonitor } from '../systems/BugMonitor';
+import { SeedBasedPartLoader } from '../loaders/SeedBasedPartLoader';
+import { DynamicPartLoader } from '../loaders/DynamicPartLoader';
 import { TrueProceduralPartsRenderer } from '../systems/TrueProceduralPartsRenderer';
 import { MonsterSelectionUI } from '../ui/MonsterSelectionUI';
 import { BreedingManager } from '../systems/BreedingManager';
 import { MonsterLifeStage } from '../genetics/GeneticsTypes';
 import { RTSHud } from '../ui/RTSHud';
+import { MonsterType } from '../genetics/GeneticsTypes';
 import { TerrariaTileRenderer } from '../systems/TerrariaTileRenderer';
 import { ProceduralMovementSystem } from '../systems/ProceduralMovementSystem';
+import { bugMonitor } from '../systems/BugMonitor';
 
 export class GameScene extends Phaser.Scene {
   private world!: Tile[][];
@@ -54,6 +55,7 @@ export class GameScene extends Phaser.Scene {
   
   // Procedural movement system for animations
   private movementSystem!: ProceduralMovementSystem;
+  private seedPartLoader!: SeedBasedPartLoader;
   
   constructor() {
     super({ key: 'GameScene' });
@@ -65,156 +67,73 @@ export class GameScene extends Phaser.Scene {
   }
   
   preload() {
-    // Preload all monster parts
-    console.log('GameScene: Preloading monster parts...');
+    console.log('GameScene: Initializing Seed-based Gene Pool...');
+    
+    // UI icons removed - files don't exist, causing 404s
     
     // Initialize Terraria-style tile renderer and preload assets
     this.tileRenderer = new TerrariaTileRenderer(this);
     this.tileRenderer.preloadTiles();
     
-    // Original monster parts
-    ['monster04', 'monster05', 'monster06', 'flying01'].forEach(type => {
-      this.load.image(`${type}_head`, `monster-parts/${type}/Head.png`);
-    });
-    ['monster05', 'monster06'].forEach(type => {
-      this.load.image(`${type}_body`, `monster-parts/${type}/Body.png`);
-    });
+    // Initialize dynamic loader for ALL parts
+    console.log('GameScene: Initializing Dynamic Part Loader for ALL monster parts...');
     
-    // Load ALL new monster parts from additional sprites
-    // Different series use different naming conventions
-    const monsterSeriesOldFormat = [
-      { prefix: 'v1_monster', count: 5 },
-      { prefix: 'v2_monster', count: 5 },
-      { prefix: 'v3_monster', count: 5 },
-      { prefix: 'v8_monster', count: 5 },
-      { prefix: 'enemy_monster', count: 5 }
-    ];
+    // Use dynamic loader to load ALL parts with correct handling of spaces
+    const dynamicLoader = new DynamicPartLoader(this);
+    dynamicLoader.loadAllMonsterParts();
     
-    const monsterSeriesNewFormat = [
-      { prefix: 'v4_m', count: 5 },
-      { prefix: 'v7_m', count: 5 },
-      { prefix: 'morev1_m', count: 5 },
-      { prefix: 'morev2_m', count: 5 },
-      { prefix: 'morev3_m', count: 5 }
-    ];
+    // Still create seed loader for compatibility
+    this.seedPartLoader = new SeedBasedPartLoader(this);
+    // Don't load parts twice - dynamic loader handles it
     
-    // Load old format (v1_monster1, etc.)
-    monsterSeriesOldFormat.forEach(series => {
-      for (let i = 1; i <= series.count; i++) {
-        const basePath = `monster-parts/${series.prefix}${i}`;
-        const key = series.prefix.replace('_monster', '_m') + i; // Convert to consistent key format
-        
-        // Try to load all possible parts
-        this.load.image(`${key}_body`, `${basePath}/Body.png`);
-        this.load.image(`${key}_mouth`, `${basePath}/Mouth.png`);
-        this.load.image(`${key}_leg_f`, `${basePath}/Leg_F.png`);
-        this.load.image(`${key}_leg_b`, `${basePath}/Leg_B.png`);
-        this.load.image(`${key}_hand_f`, `${basePath}/Hand_F.png`);
-        this.load.image(`${key}_hand_b`, `${basePath}/Hand_B.png`);
-        this.load.image(`${key}_eye`, `${basePath}/eye.png`);
-        this.load.image(`${key}_eye1`, `${basePath}/Eye1.png`);
-        this.load.image(`${key}_eye2`, `${basePath}/Eye2.png`);
-        this.load.image(`${key}_eye_f`, `${basePath}/Eye_F.png`);
-        this.load.image(`${key}_eye_b`, `${basePath}/Eye_B.png`);
-        this.load.image(`${key}_tongue`, `${basePath}/Tongue.png`);
-        this.load.image(`${key}_box`, `${basePath}/Box.png`);
-        this.load.image(`${key}_head`, `${basePath}/Head.png`);
-        this.load.image(`${key}_neck`, `${basePath}/Neck.png`);
-        this.load.image(`${key}_wing`, `${basePath}/Wing.png`);
-        this.load.image(`${key}_wing_f`, `${basePath}/Wing_F.png`);
-        this.load.image(`${key}_wing_b`, `${basePath}/Wing_B.png`);
-        this.load.image(`${key}_leg1`, `${basePath}/Leg1.png`);
-        this.load.image(`${key}_leg2`, `${basePath}/Leg2.png`);
-        this.load.image(`${key}_tail`, `${basePath}/Tails.png`);
-      }
-    });
+    // All monster parts are now handled by SeedBasedPartLoader
+    // This prevents 404 errors by only loading verified parts
     
-    // Load new format (v4_m1, etc.)
-    monsterSeriesNewFormat.forEach(series => {
-      for (let i = 1; i <= series.count; i++) {
-        const basePath = `monster-parts/${series.prefix}${i}`;
-        const key = `${series.prefix}${i}`;
-        
-        // Try to load all possible parts
-        this.load.image(`${key}_body`, `${basePath}/Body.png`);
-        this.load.image(`${key}_mouth`, `${basePath}/Mouth.png`);
-        this.load.image(`${key}_leg_f`, `${basePath}/Leg_F.png`);
-        this.load.image(`${key}_leg_b`, `${basePath}/Leg_B.png`);
-        this.load.image(`${key}_hand_f`, `${basePath}/Hand_F.png`);
-        this.load.image(`${key}_hand_b`, `${basePath}/Hand_B.png`);
-        this.load.image(`${key}_eye`, `${basePath}/eye.png`);
-        this.load.image(`${key}_eye1`, `${basePath}/Eye1.png`);
-        this.load.image(`${key}_eye2`, `${basePath}/Eye2.png`);
-        this.load.image(`${key}_eye_f`, `${basePath}/Eye_F.png`);
-        this.load.image(`${key}_eye_b`, `${basePath}/Eye_B.png`);
-        this.load.image(`${key}_tongue`, `${basePath}/Tongue.png`);
-        this.load.image(`${key}_box`, `${basePath}/Box.png`);
-        this.load.image(`${key}_head`, `${basePath}/Head.png`);
-        this.load.image(`${key}_neck`, `${basePath}/Neck.png`);
-        this.load.image(`${key}_wing`, `${basePath}/Wing.png`);
-        this.load.image(`${key}_wing_f`, `${basePath}/Wing_F.png`);
-        this.load.image(`${key}_wing_b`, `${basePath}/Wing_B.png`);
-        this.load.image(`${key}_leg1`, `${basePath}/Leg1.png`);
-        this.load.image(`${key}_leg2`, `${basePath}/Leg2.png`);
-        this.load.image(`${key}_tail`, `${basePath}/Tails.png`);
-      }
-    });
+    // Load only the spine images that ACTUALLY exist
+    this.loadActualSpineImages();
+  }
+  
+  private loadActualSpineImages(): void {
+    console.log('Loading actual spine images that exist...');
     
-    // Special characters
-    const specialChars = [
-      'pumpkin_head', 'skull_knight', 'vampire', 'anubis',
-      'skeleton_crusader1', 'skeleton_crusader2', 'skeleton_crusader3'
-    ];
+    // Define what actually exists based on the copy operation
+    // ONLY include files that actually exist to prevent 404s
+    const spineImageMap = {
+      // Char01 and Char02 have the actual files
+      'Char01': ['BackHand', 'Body', 'Eye01', 'Eye02', 'EyeBrow01', 'EyeBrow02', 'FrontHand', 'Hair', 'Hand_B', 'Hand_F', 'Ice', 'Leg', 'Leg_B', 'Leg_F', 'Mouth', 'Poisoned', 'Smoked2', 'Splash', 'smoked'],
+      'Char02': ['BackHand', 'Body', 'Eye01', 'Eye02', 'EyeBrow01', 'EyeBrow02', 'Eyebrow', 'FrontHand', 'Hair', 'Hand_B', 'Hand_F', 'Ice', 'Leg', 'Leg_B', 'Leg_F', 'Mouth', 'Poisoned', 'Smoked2', 'Splash', 'smoked'],
+      'Char03': ['BackHand']
+      // Remove all the Monster entries that don't actually exist
+    };
     
-    specialChars.forEach(char => {
-      const basePath = `monster-parts/${char}`;
-      this.load.image(`${char}_body`, `${basePath}/Body.png`);
-      this.load.image(`${char}_head`, `${basePath}/Head.png`);
-      this.load.image(`${char}_arm_l`, `${basePath}/Arm_L.png`);
-      this.load.image(`${char}_arm_r`, `${basePath}/Arm_R.png`);
-      this.load.image(`${char}_leg_l`, `${basePath}/Leg_L.png`);
-      this.load.image(`${char}_leg_r`, `${basePath}/Leg_R.png`);
-    });
-    
-    // Load faces
-    const faces = [
-      { type: 'monster04', variants: ['Face 01', 'Face 02'] },
-      { type: 'monster05', variants: ['Face 01', 'Face 02', 'Face 03'] },
-      { type: 'monster06', variants: ['Face 01', 'Face 02', 'Face 03'] },
-      { type: 'flying01', variants: ['Face 01', 'Face 02'] }
-    ];
-    
-    faces.forEach(face => {
-      face.variants.forEach(variant => {
-        const key = `${face.type}_${variant.replace(' ', '_').toLowerCase()}`;
-        this.load.image(key, `monster-parts/${face.type}/${variant}.png`);
+    // Load each image with proper key
+    let loadCount = 0;
+    Object.entries(spineImageMap).forEach(([folder, parts]) => {
+      parts.forEach(part => {
+        const key = `spine_${folder.toLowerCase()}_${part.toLowerCase()}`;
+        const path = `monster-parts/spine_images/Spine/${folder}/${part}.png`;
+        this.load.image(key, path);
+        loadCount++;
       });
     });
     
-    // Load limbs
-    ['Left Hand', 'Right Hand', 'Left Leg', 'Right Leg'].forEach(limb => {
-      ['monster04', 'monster05', 'monster06'].forEach(type => {
-        const key = `${type}_${limb.replace(/ /g, '_').toLowerCase()}`;
-        this.load.image(key, `monster-parts/${type}/${limb}.png`);
-      });
+    console.log(`Loading ${loadCount} actual spine images!`);
+    
+    // Set up error handler to silently ignore missing files
+    this.load.on('loaderror', (file: any) => {
+      // Silently ignore 404s - not all monsters have all parts
+      // This prevents console spam from missing optional parts
+      console.debug(`[Silent 404] Missing optional asset: ${file.key}`);
     });
     
-    // Load upper arms (only monster05 and monster06)
-    ['Left Upper Arm', 'Right Upper Arm'].forEach(limb => {
-      ['monster05', 'monster06'].forEach(type => {
-        const key = `${type}_${limb.replace(/ /g, '_').toLowerCase()}`;
-        this.load.image(key, `monster-parts/${type}/${limb}.png`);
-      });
+    // Also silence Phaser's default error logging for missing textures
+    this.load.on('filecomplete', (key: string) => {
+      // Successfully loaded
     });
     
-    // Load wings
-    ['Left Wing', 'Right Wing'].forEach(wing => {
-      this.load.image(`flying01_${wing.replace(' ', '_').toLowerCase()}`, `monster-parts/flying01/${wing}.png`);
-    });
-    
-    // Load weapons
-    ['monster05', 'monster06'].forEach(type => {
-      this.load.image(`${type}_weapon`, `monster-parts/${type}/Weapon.png`);
+    this.load.on('filefailed', (file: any) => {
+      // Silently handle failed loads
+      return;
     });
   }
 
@@ -237,8 +156,9 @@ export class GameScene extends Phaser.Scene {
     // Initialize bug monitoring system
     bugMonitor.init();
     
-    // Initialize sprite manager and create cave tiles
-    spriteManager.createCaveTiles();
+    // Display which seeds were selected (now loading TWO!)
+    const seedInfo = this.seedPartLoader.getCurrentSeeds();
+    console.log(`🌱 Active Gene Pools: ${seedInfo[0].name} + ${seedInfo[1].name}`);
     
     // Create beautiful background using procedural tile renderer
     this.tileRenderer.createBackground(WORLD_WIDTH, WORLD_HEIGHT, TILE_SIZE);
@@ -283,6 +203,8 @@ export class GameScene extends Phaser.Scene {
     
     // Initialize sprite renderer and breeding systems
     this.monsterSpriteRenderer = new TrueProceduralPartsRenderer(this);
+    // Pass available monster types from seed to the renderer
+    this.monsterSpriteRenderer.setSeedMonsterTypes(this.seedPartLoader.getAvailableMonsterTypes());
     this.monsterSelectionUI = new MonsterSelectionUI(this);
     this.breedingManager = new BreedingManager(this, {
       hiveX,
@@ -296,6 +218,9 @@ export class GameScene extends Phaser.Scene {
     
     // Initialize RTS HUD with pheromone and speed controls
     this.rtsHud = new RTSHud(this, this.pheromoneSystem);
+    
+    // Add initial pheromones to guide mining behavior
+    this.addInitialMiningPheromones();
     
     // Set up monster selection UI callback
     this.monsterSelectionUI.setBreedCallback((monster) => {
@@ -463,17 +388,17 @@ export class GameScene extends Phaser.Scene {
     this.waveTimerText.setScrollFactor(0);
     this.waveTimerText.setDepth(2000);
 
-    // Speed display
-    this.speedText = this.add.text(20, 80, `Speed: ${this.gameSpeed.toFixed(1)}x`, {
+    // Create speed control text
+    this.speedText = this.add.text(this.cameras.main.width - 100, 50, 'Speed: 1.5x', {
       fontSize: '16px',
-      color: '#00ff00',
-      fontFamily: 'Arial, sans-serif',
-      backgroundColor: '#000000',
-      padding: { x: 8, y: 4 }
+      color: '#00ff00'
     });
     this.speedText.setScrollFactor(0);
-    this.speedText.setDepth(2000);
-
+    this.speedText.setDepth(100000);
+    
+    // Create evolution stats display
+    this.createEvolutionStatsDisplay();
+    
     // TOP RIGHT - Resource display (detailed)
     this.createResourceDisplay();
 
@@ -481,6 +406,48 @@ export class GameScene extends Phaser.Scene {
     this.createBottomHUD();
   }
 
+  private createEvolutionStatsDisplay(): void {
+    // Create gene pool stats display
+    const seedInfo = this.seedPartLoader.getCurrentSeeds();
+    const totalMonsters = seedInfo[0].monsterSets.length + seedInfo[1].monsterSets.length;
+    
+    this.add.text(20, 80, 'Gene Pools (2 Mixed)', {
+      fontSize: '14px',
+      color: '#00ffff',
+      fontStyle: 'bold'
+    }).setScrollFactor(0).setDepth(2000);
+    
+    const evolutionText = this.add.text(20, 100, [
+      `Pools: ${seedInfo[0].name} + ${seedInfo[1].name}`,
+      `Monster Types: ${totalMonsters}`,
+      `Parts Loaded: ~${totalMonsters * 7}` // Estimate ~7 parts per monster
+    ], {
+      fontSize: '12px',
+      color: '#ffffff'
+    });
+    evolutionText.setScrollFactor(0);
+    evolutionText.setDepth(2000);
+    
+    // Add generation counter
+    let generation = 0;
+    let babiesBorn = 0;
+    // HUD/debug display for gene pools
+    const seedDebugText = this.add.text(10, 350, '', { 
+      fontSize: '10px', 
+      color: '#00ff00' 
+    });
+    
+    if (this.seedPartLoader && this.seedPartLoader.getCurrentSeeds) {
+      const seeds = this.seedPartLoader.getCurrentSeeds();
+      seedDebugText.setText([
+        `Gene Pools: ${seeds[0].name} + ${seeds[1].name}`,
+        `Monsters: ${seeds[0].monsterSets.length + seeds[1].monsterSets.length} types`
+      ]);
+    }
+    // Store references for updating
+    (this as any).generationCounter = { generation, babiesBorn, increment: () => babiesBorn++ };
+  }
+  
   private createResourceDisplay(): void {
     const startX = this.scale.width - 200;
     const startY = 20;
@@ -528,6 +495,83 @@ export class GameScene extends Phaser.Scene {
     // - Pheromone command panel with 4 pheromone types
     // - Speed control panel with speed buttons and pause
     // - Professional StarCraft-style interface
+  }
+  
+  /**
+   * Add initial pheromones to guide mining behavior
+   */
+  private addInitialMiningPheromones(): void {
+    // Find the starting chamber location
+    const chamberCenterX = Math.floor(WORLD_WIDTH / 2);
+    const chamberY = 40; // Floor of the starting chamber (approximation based on hive position)
+    const chamberHalfWidth = 15; // Chamber is about 30 blocks wide
+    
+    // Place "DO NOT MINE" pheromones on the entire floor of the starting chamber
+    for (let x = chamberCenterX - chamberHalfWidth; x <= chamberCenterX + chamberHalfWidth; x++) {
+      // Place strong DO_NOT_MINE pheromones on the floor
+      this.pheromoneSystem.addPheromone(
+        x,  // tile X
+        chamberY, // tile Y
+        PheromoneType.DO_NOT_MINE,
+        100, // Max strength
+        0,   // No decay
+        true  // Player-placed (stronger effect)
+      );
+    }
+    
+    // Place "MINE HERE" pheromones on the walls, 2 blocks up from the floor
+    const wallY = chamberY - 2; // 2 blocks above the floor
+    
+    // Left wall mining pheromone
+    const leftWallX = chamberCenterX - chamberHalfWidth - 1; // Just outside the chamber
+    this.pheromoneSystem.addPheromone(
+      leftWallX,
+      wallY,
+      PheromoneType.MINE_HERE,
+      100, // Max strength
+      0,   // No decay
+      true  // Player-placed
+    );
+    
+    // Add a few more mining pheromones vertically on the left wall
+    for (let i = 0; i < 3; i++) {
+      this.pheromoneSystem.addPheromone(
+        leftWallX,
+        wallY - i,
+        PheromoneType.MINE_HERE,
+        100,
+        0,
+        true
+      );
+    }
+    
+    // Right wall mining pheromone  
+    const rightWallX = chamberCenterX + chamberHalfWidth + 1; // Just outside the chamber
+    this.pheromoneSystem.addPheromone(
+      rightWallX,
+      wallY,
+      PheromoneType.MINE_HERE,
+      100, // Max strength
+      0,   // No decay
+      true  // Player-placed
+    );
+    
+    // Add a few more mining pheromones vertically on the right wall
+    for (let i = 0; i < 3; i++) {
+      this.pheromoneSystem.addPheromone(
+        rightWallX,
+        wallY - i,
+        PheromoneType.MINE_HERE,
+        100,
+        0,
+        true
+      );
+    }
+    
+    console.log('Initial mining pheromones placed:');
+    console.log(`- DO NOT MINE on floor at Y=${chamberY}`);
+    console.log(`- MINE HERE on left wall at X=${leftWallX}, Y=${wallY}`);
+    console.log(`- MINE HERE on right wall at X=${rightWallX}, Y=${wallY}`);
   }
 
   private handleInput(deltaTime: number): void {
@@ -606,6 +650,22 @@ export class GameScene extends Phaser.Scene {
           this.handleMonsterMining(monster, deltaTime);
         }
       }
+      // Skip updates if monster is stunned
+      if (monster.isStunned) {
+        // Only apply gravity while stunned
+        monster.position.vy += 500 * deltaTime; // Gravity
+        monster.position.y += monster.position.vy * deltaTime;
+        
+        // Check ground collision
+        const newY = monster.position.y;
+        if (this.checkTileCollision(monster.position.x, newY)) {
+          monster.position.y = Math.floor(monster.position.y / TILE_SIZE) * TILE_SIZE;
+          monster.position.vy = 0;
+          monster.position.onGround = true;
+        }
+        return true; // Keep the stunned monster in the array
+      }
+      
       // Pass pheromone system to monster for AI decisions
       monster.update(deltaTime, this.pheromoneSystem, this.world);
       
@@ -628,8 +688,8 @@ export class GameScene extends Phaser.Scene {
         // SAFETY CHECK: Prevent monster sprites from becoming giant due to animation bugs
         const currentScaleX = monster.sprite.scaleX;
         const currentScaleY = monster.sprite.scaleY;
-        const maxScale = 0.15; // Maximum allowed scale (3x normal tiny size)
-        const normalScale = 0.05; // Normal tiny scale
+        const maxScale = 0.3; // Increased to allow our new bigger monsters
+        const normalScale = 0.2; // New normal scale for adult monsters
         
         // If monster sprite has become too large, reset it
         if (Math.abs(currentScaleX) > maxScale || Math.abs(currentScaleY) > maxScale) {
@@ -1026,26 +1086,25 @@ export class GameScene extends Phaser.Scene {
       }
     }
   }
-
-  /**
-   * Ant-inspired tunneling algorithm - creates stepped ramps and avoids vertical drops
-   */
+  
   private findOptimalDiggingTile(monster: Monster, tileX: number, tileY: number): { x: number; y: number; priority: number } | null {
     let bestTile: { x: number; y: number; priority: number } | null = null;
     
     // Check if monster should return to a successful mining area first
-    const bestMemory = monster.getBestMiningMemory();
-    if (monster.shouldReturnToMining && bestMemory) {
-      const memoryDistance = Math.sqrt(
-        Math.pow(bestMemory.x - tileX, 2) + Math.pow(bestMemory.y - tileY, 2)
-      );
-      
-      if (memoryDistance < 3) {
-        // Near the successful area - clear the return flag and continue mining
-        monster.clearReturnToMining();
-      } else if (memoryDistance < 15) {
-        // Close to successful area - prioritize mining here
-        // Continue with normal digging patterns but boosted priority
+    if (monster.shouldReturnToMining && monster.getBestMiningMemory()) {
+      const memory = monster.getBestMiningMemory();
+      if (memory) {
+        const memoryDistance = Math.sqrt(
+          Math.pow(memory.x - tileX, 2) + Math.pow(memory.y - tileY, 2)
+        );
+        
+        if (memoryDistance < 3) {
+          // Near the successful area - clear the return flag and continue mining
+          monster.clearReturnToMining();
+        } else if (memoryDistance < 15) {
+          // Close to successful area - prioritize mining here
+          // Continue with normal digging patterns but boosted priority
+        }
       }
     }
 
@@ -1415,6 +1474,9 @@ export class GameScene extends Phaser.Scene {
     // PYRAMID CLIMBING RESOURCE THROW LOGIC
     const pyramidCenter = WORLD_WIDTH * TILE_SIZE / 2;
     
+    // Detect repeated jumping without progress
+    this.detectJumpingStuck(monster);
+    
     // Check if we should throw resource to climb
     if (monster.shouldThrowResourceForClimbing(this.world, pyramidCenter)) {
       monster.throwResourceUp(this.resourceChunkManager);
@@ -1717,83 +1779,221 @@ export class GameScene extends Phaser.Scene {
   }
   
   /**
-   * SMOOTH PYRAMID CLIMBING - Gradually move monsters up pyramid blocks
+   * ENHANCED CLIMBING - Can climb 2 blocks, fails at 3 blocks
    */
   private handlePyramidClimbing(monster: Monster): void {
     const pyramidCenter = WORLD_WIDTH * TILE_SIZE / 2;
     const nearPyramid = Math.abs(monster.position.x - pyramidCenter) < TILE_SIZE * 20;
     
-    // Only climb if near pyramid and carrying resources (or trying to reach hive)
-    const shouldClimb = nearPyramid && 
-      (monster.carryingChunkId || monster.helpingCarryChunkId || 
-       monster.isClimbing || monster.currentAction === MonsterAction.RETURN_HOME);
+    // Always allow climbing attempts (not just near pyramid)
+    const shouldClimb = true; // Allow all monsters to try climbing
     
     if (!shouldClimb) return;
     
-    // Check for pyramid blocks directly ahead
+    // Check for blocks directly ahead
     const tileX = Math.floor(monster.position.x / TILE_SIZE);
     const tileY = Math.floor(monster.position.y / TILE_SIZE);
     const feetY = Math.floor((monster.position.y + 8) / TILE_SIZE); // Monster feet position
-    const direction = this.colonyHive.x > monster.position.x ? 1 : -1;
+    const direction = monster.position.vx !== 0 ? Math.sign(monster.position.vx) : 
+                      (this.colonyHive.x > monster.position.x ? 1 : -1);
     
-    // Check if there's a pyramid block at our feet level ahead
-    const blockAhead = this.world[tileX + direction]?.[feetY];
-    const blockAbove = this.world[tileX + direction]?.[feetY - 1];
+    // Check wall height ahead
+    const blockAhead1 = this.world[tileX + direction]?.[feetY];     // Block at feet level
+    const blockAhead2 = this.world[tileX + direction]?.[feetY - 1]; // Block at body level  
+    const blockAhead3 = this.world[tileX + direction]?.[feetY - 2]; // Block at head level
+    const blockAbove3 = this.world[tileX + direction]?.[feetY - 3]; // Space above 3 blocks
     
-    // If pyramid block ahead at feet level and space above
-    if (blockAhead && blockAhead.type === TileType.BEDROCK && 
-        (!blockAbove || blockAbove.type === TileType.AIR)) {
+    // Determine wall height
+    let wallHeight = 0;
+    if (blockAhead1 && blockAhead1.type !== TileType.AIR) wallHeight = 1;
+    if (blockAhead2 && blockAhead2.type !== TileType.AIR) wallHeight = 2;
+    if (blockAhead3 && blockAhead3.type !== TileType.AIR) wallHeight = 3;
+    
+    // ATTEMPT TO CLIMB 3 BLOCKS - WILL FAIL!
+    if (wallHeight >= 3 && (!blockAbove3 || blockAbove3.type === TileType.AIR)) {
+      // Check if monster is attempting to climb (moving toward wall)
+      const movingTowardWall = Math.abs(monster.position.vx) > 10;
       
-      // SMOOTH CLIMBING - Gradually lift monster up
-      const targetY = (feetY - 1) * TILE_SIZE; // Top of the block
+      if (movingTowardWall && !monster.isFalling) {
+        console.log(`Monster ${monster.id} attempting to climb 3-block wall - TOO HIGH!`);
+        
+        // Start climbing animation briefly
+        monster.position.vy = -200; // Small jump
+        monster.position.y -= 5; // Lift slightly
+        
+        // Then FAIL and fall!
+        setTimeout(() => {
+          // Face plant!
+          monster.position.vy = 300; // Fall down hard
+          monster.position.vx = -direction * 50; // Bounce backward
+          monster.isFalling = true;
+          
+          // Take damage
+          const damage = 15;
+          monster.health = Math.max(0, monster.health - damage);
+          console.log(`Monster ${monster.id} face planted! Took ${damage} damage. Health: ${monster.health}`);
+          
+          // DROP CARRIED RESOURCES!
+          if (monster.carryingChunkId) {
+            const chunk = this.resourceChunkManager.chunks.get(monster.carryingChunkId);
+            if (chunk) {
+              // Drop the chunk
+              chunk.isBeingCarried = false;
+              chunk.currentCarriers = [];
+              chunk.x = monster.position.x;
+              chunk.y = monster.position.y - 10;
+              
+              // Give it some physics to scatter
+              chunk.velocityX = (Math.random() - 0.5) * 100;
+              chunk.velocityY = -50;
+              chunk.onGround = false;
+              
+              console.log(`Monster ${monster.id} dropped resource ${monster.carryingChunkId} after face planting!`);
+            }
+            
+            monster.carryingChunkId = null;
+          }
+          
+          // Stun the monster briefly
+          monster.isStunned = true;
+          setTimeout(() => {
+            monster.isStunned = false;
+            monster.isFalling = false;
+          }, 2000); // Stunned for 2 seconds
+        }, 300); // Fail after 300ms of trying
+      }
+    }
+    // CAN CLIMB 2 BLOCKS!
+    else if (wallHeight === 2 && (!blockAhead3 || blockAhead3.type === TileType.AIR)) {
+      // 2-block climbing - ENHANCED
+      const targetY = (feetY - 2) * TILE_SIZE; // Top of 2 blocks
       const currentY = monster.position.y;
       
-      // If we're below the target, move up smoothly
       if (currentY > targetY - 8) {
-        // Calculate smooth interpolation
-        const distanceToTarget = currentY - (targetY - 8);
-        const climbSpeed = Math.min(1.5, distanceToTarget * 0.15); // Adaptive speed based on distance
+        // Fast climbing for 2 blocks
+        const climbSpeed = 3; // Faster for 2-block climb
         
-        // Smooth upward movement with easing
-        monster.position.y -= climbSpeed; // Smooth variable speed
-        monster.position.x += direction * 0.5; // Gentler forward movement
-        
-        // Set gentle upward velocity to work with physics
-        monster.position.vy = -50 - (climbSpeed * 20); // Gentle upward velocity proportional to climb speed
-        
-        // Reduce horizontal velocity for smoother motion
-        monster.position.vx = direction * 30; // Controlled forward speed
-        
-        // Mark as on ground to prevent falling
+        monster.position.y -= climbSpeed;
+        monster.position.x += direction * 0.8; // Move forward while climbing
+        monster.position.vy = -150; // Strong upward velocity
+        monster.position.vx = direction * 40;
         monster.position.onGround = true;
         
-        // Only log occasionally to reduce spam
-        if (Math.random() < 0.1) {
-          console.log(`Monster ${monster.id} smoothly climbing pyramid (y: ${currentY.toFixed(1)} -> ${targetY})`);
+        if (Math.random() < 0.15) {
+          console.log(`Monster ${monster.id} climbing 2-block wall!`);
         }
       }
     }
-    // If there's a block at our current level (we're inside/against it)
-    else if (this.world[tileX]?.[feetY]?.type === TileType.BEDROCK) {
-      // We're stuck in a pyramid block - push up smoothly!
-      monster.position.y -= 1.8; // Smoother upward push
-      monster.position.vy = -120; // Gentler upward velocity
-      monster.position.vx = direction * 20; // Slight forward drift
-      monster.position.onGround = true; // Prevent falling
+    // CAN CLIMB 1 BLOCK (original pyramid climbing)
+    else if (wallHeight === 1 && (!blockAhead2 || blockAhead2.type === TileType.AIR)) {
+      // 1-block climbing - smooth as before
+      const targetY = (feetY - 1) * TILE_SIZE;
+      const currentY = monster.position.y;
       
-      if (Math.random() < 0.05) {
-        console.log(`Monster ${monster.id} pushing out of pyramid block`);
+      if (currentY > targetY - 8) {
+        const distanceToTarget = currentY - (targetY - 8);
+        const climbSpeed = Math.min(1.5, distanceToTarget * 0.15);
+        
+        monster.position.y -= climbSpeed;
+        monster.position.x += direction * 0.5;
+        monster.position.vy = -50 - (climbSpeed * 20);
+        monster.position.vx = direction * 30;
+        monster.position.onGround = true;
       }
     }
-    // If blocked by pyramid and on ground, jump
-    else if (blockAhead && blockAhead.type === TileType.BEDROCK && monster.position.onGround) {
-      // Smoother jump with better arc
-      monster.position.vy = -450; // More controlled jump
-      monster.position.vx = direction * 60; // Moderate forward momentum
-      
-      if (Math.random() < 0.2) {
-        console.log(`Monster ${monster.id} jumping at pyramid block`);
+    // If stuck inside a block, push out
+    else if (this.world[tileX]?.[feetY] && this.world[tileX][feetY].type !== TileType.AIR) {
+      monster.position.y -= 1.8;
+      monster.position.vy = -120;
+      monster.position.vx = direction * 20;
+      monster.position.onGround = true;
+    }
+  }
+
+  /**
+   * Detect if monster is jumping repeatedly without making progress
+   */
+  private detectJumpingStuck(monster: Monster): void {
+    const currentTime = Date.now();
+    
+    // Check if monster is jumping (negative vertical velocity)
+    if (monster.position.vy < -200) {
+      // Track jump start position
+      if (monster.jumpCount === 0) {
+        monster.positionBeforeJumps = { 
+          x: monster.position.x, 
+          y: monster.position.y 
+        };
+        monster.jumpCount = 1;
+        monster.lastJumpTime = currentTime;
+      } else if (currentTime - monster.lastJumpTime > 500) { // New jump detected
+        monster.jumpCount++;
+        monster.lastJumpTime = currentTime;
+        
+        // Check if we've jumped 3+ times without moving much
+        if (monster.jumpCount >= 3 && monster.positionBeforeJumps) {
+          const distanceMoved = Math.sqrt(
+            Math.pow(monster.position.x - monster.positionBeforeJumps.x, 2) +
+            Math.pow(monster.position.y - monster.positionBeforeJumps.y, 2)
+          );
+          
+          // If we haven't moved more than 2 blocks after 3 jumps, we're stuck
+          if (distanceMoved < TILE_SIZE * 2) {
+            console.log(`Monster ${monster.id} stuck jumping! Moved only ${distanceMoved.toFixed(0)} pixels in ${monster.jumpCount} jumps`);
+            
+            // DROP RESOURCES!
+            if (monster.carryingChunkId) {
+              const chunk = this.resourceChunkManager.chunks.get(monster.carryingChunkId);
+              if (chunk) {
+                // Drop the chunk
+                chunk.isBeingCarried = false;
+                chunk.currentCarriers = [];
+                chunk.x = monster.position.x;
+                chunk.y = monster.position.y - 10;
+                
+                // Give it physics to scatter
+                chunk.velocityX = (Math.random() - 0.5) * 100;
+                chunk.velocityY = -100;
+                chunk.onGround = false;
+                
+                console.log(`Monster ${monster.id} dropped resource ${monster.carryingChunkId} due to jump stuck!`);
+              }
+              
+              monster.carryingChunkId = null;
+            }
+            
+            // Also drop helping resources
+            if (monster.helpingCarryChunkId) {
+              monster.helpingCarryChunkId = null;
+            }
+            
+            // Change direction - walk the other way
+            monster.position.vx = -monster.position.vx * 2; // Reverse and boost
+            
+            // Clear target to find a new path
+            monster.target = null;
+            monster.wanderTarget = null;
+            
+            // Reset jump tracking
+            monster.jumpCount = 0;
+            monster.positionBeforeJumps = null;
+            monster.jumpStuckCounter++;
+            
+            // If repeatedly getting stuck, take a longer break
+            if (monster.jumpStuckCounter > 2) {
+              monster.state = MonsterState.RESTING;
+              setTimeout(() => {
+                monster.state = MonsterState.IDLE;
+                monster.jumpStuckCounter = 0;
+              }, 5000); // Rest for 5 seconds
+            }
+          }
+        }
       }
+    } else if (monster.position.onGround && currentTime - monster.lastJumpTime > 2000) {
+      // Reset jump tracking if on ground for 2 seconds
+      monster.jumpCount = 0;
+      monster.positionBeforeJumps = null;
     }
   }
 
@@ -2337,8 +2537,8 @@ export class GameScene extends Phaser.Scene {
       return; // Fog of war is handled by TerrariaTileRenderer
     }
     
-    // Fallback: Try to get canvas texture from sprite manager
-    const spriteCanvas = spriteManager.getCanvasTexture(properties.spriteName);
+    // No fallback needed - we handle all textures through the dynamic loader
+    const spriteCanvas = null;
     
     if (spriteCanvas) {
       // Use sprite texture if available
@@ -2403,6 +2603,13 @@ export class GameScene extends Phaser.Scene {
    */
   private onMonstersBred(offspring: any[]): void {
     console.log(`New offspring created: ${offspring.length} babies`);
+    
+    // Update baby counter
+    if ((this as any).generationCounter) {
+      offspring.forEach(() => {
+        (this as any).generationCounter.babiesBorn++;
+      });
+    }
     
     const hiveX = (WORLD_WIDTH * TILE_SIZE) / 2;
     const hiveY = (20 + 12 + 6 - 1) * TILE_SIZE;

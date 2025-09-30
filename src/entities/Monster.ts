@@ -56,18 +56,17 @@ export interface MonsterPosition {
   vy: number; // velocity y
   onGround: boolean;
 }
-
 export class Monster {
   public id: string;
   public genetics: MonsterGenetics;
   public stats: MonsterStats;
-  public position: MonsterPosition;
-  public state: MonsterState;
-  public currentAction: MonsterAction;
-  public target: { x: number; y: number } | null;
-  public energy: number;
-  public age: number; // in seconds
-  public lastBreedTime: number;
+  public position: { x: number; y: number; vx: number; vy: number; onGround: boolean };
+  public energy: number = 100;
+  public maxEnergy: number = 100;
+  public health: number = 100;
+  public maxHealth: number = 100;
+  public age: number = 0;
+  public generation: number = 1;
   public carryingResources: number;
   public actionTimer: number;
   public aiCooldown: number;
@@ -115,7 +114,6 @@ export class Monster {
   public energyThreshold: number; // When to start seeking rest
 
   // Additional wall crawling properties
-  public wallCrawlCooldown: number;
   public lastWallCrawlAttempt: number;
   
   // Mining hit tracking for satisfying mining feedback
@@ -126,20 +124,39 @@ export class Monster {
   public isClimbing: boolean = false;
   public climbTarget: { x: number; y: number } | null = null;
   
+  // AI state management
+  public state: MonsterState = MonsterState.IDLE;
+  public currentAction: MonsterAction = MonsterAction.EXPLORE;
+  public target: { x: number; y: number } | null = null;
+  public lastBreedTime: number = 0;
+  public wanderTarget: { x: number; y: number } | null = null;
+  public wallCrawlCooldown: number = 0;
+  
   // Advanced stuck detection for pathfinding
-  public movementHistory: { x: number; y: number; time: number }[] = [];
   public lastStuckCheck: number = 0;
   public consecutiveStuckCount: number = 0;
   public lastSuperJump: number = 0;
 
   // Fall damage and stuck detection system
-  public isFalling: boolean;
-  public fallStartY: number;
+  // Physics state
+  public isFalling: boolean = false;
+  public fallHeight: number = 0;
+  public fallStartY: number = 0;
+  public isStunned: boolean = false;
   public lastPosition: { x: number; y: number };
   public stuckTimer: number;
   public stuckCheckInterval: number;
   public spawnTime: number; // Track when monster was created
   public lastStuckDetection: number; // Prevent spam detection
+  
+  // Movement history for stuck detection
+  public movementHistory: { x: number; y: number; time: number }[] = [];
+  
+  // Jumping stuck detection
+  public jumpCount: number = 0;
+  public lastJumpTime: number = 0;
+  public positionBeforeJumps: { x: number; y: number } | null = null;
+  public jumpStuckCounter: number = 0;
 
   // Visual properties
   public sprite: Phaser.GameObjects.Container | null = null; // Now a container for multi-part sprites

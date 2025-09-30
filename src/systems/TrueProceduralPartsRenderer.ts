@@ -9,25 +9,64 @@ import { MovementType, MovementTypeDetector } from './MovementTypeDetector';
 export class TrueProceduralPartsRenderer {
   private scene: Scene;
   
-  // Available monster parts - using actual folder names that exist!
+  // EXCLUSION LIST - heads we don't want to use
+  private excludedHeads = [
+    'skull_knight',  // User doesn't like this head
+    'pumpkin_head',  // User doesn't like this head
+    'anubis'         // User doesn't like this head (Monster 4)
+  ];
+  
+  // Available monster parts - ALL folders with equal chance!
   private availableParts = {
     heads: [
       // Original (verified to exist)
       'monster04', 'monster05', 'monster06', 'flying01',
-      // Use correct folder names that actually exist
+      // V1 series
       'v1_monster1', 'v1_monster2', 'v1_monster3', 'v1_monster4', 'v1_monster5',
+      // V2 series
       'v2_monster1', 'v2_monster2', 'v2_monster3', 'v2_monster4', 'v2_monster5',
+      // V3 series
       'v3_monster1', 'v3_monster2', 'v3_monster3', 'v3_monster4', 'v3_monster5',
+      // V4 series
+      'v4_m1', 'v4_m2', 'v4_m3', 'v4_m4', 'v4_m5',
+      'v4_monster1', 'v4_monster2', 'v4_monster3', 'v4_monster4', 'v4_monster5',
+      // V5 series
+      'v5_monster1', 'v5_monster2', 'v5_monster3', 'v5_monster4', 'v5_monster5',
+      // V6 series
+      'v6_monster1', 'v6_monster2', 'v6_monster3', 'v6_monster4', 'v6_monster5',
+      // V7 series - IMPORTANT: These were missing!
+      'v7_m1', 'v7_m2', 'v7_m3', 'v7_m4',
+      // V8 series
       'v8_monster1', 'v8_monster2', 'v8_monster3', 'v8_monster4', 'v8_monster5',
+      // V9 series
+      'v9_monster1', 'v9_monster2', 'v9_monster3', 'v9_monster4',
+      // Enemy series
       'enemy_monster1', 'enemy_monster2', 'enemy_monster3', 'enemy_monster4', 'enemy_monster5',
-      // Special characters (these exist)
+      // More series
+      'morev2_m1', 'morev2_m2', 'morev2_m3', 'morev2_m4', 'morev2_m5',
+      'morev3_m1', 'morev3_m2', 'morev3_m3', 'morev3_m4',
+      // Special characters - some excluded via excludedHeads list
       'pumpkin_head', 'skull_knight', 'vampire', 'anubis',
       'skeleton_crusader1', 'skeleton_crusader2', 'skeleton_crusader3'
     ],
     bodies: [
-      // Only list ones we know have bodies
+      // Original
       'monster05', 'monster06',
-      'v8_monster1', // v8_monster1 has Body.png
+      // V1-V9 bodies (only ones that have Body.png)
+      'v1_monster1', 'v1_monster2', 'v1_monster3', 'v1_monster4', 'v1_monster5',
+      'v2_monster1', 'v2_monster2', 'v2_monster3', 'v2_monster4', 'v2_monster5',
+      'v3_monster1', 'v3_monster2', 'v3_monster3', 'v3_monster4', 'v3_monster5',
+      'v4_m1', 'v4_m2', 'v4_m3', 'v4_m4', 'v4_m5',
+      'v4_monster1', 'v4_monster2', 'v4_monster3', 'v4_monster4', 'v4_monster5',
+      'v5_monster1', 'v5_monster2', 'v5_monster3', 'v5_monster4', 'v5_monster5',
+      'v6_monster1', 'v6_monster2', 'v6_monster3', 'v6_monster4', 'v6_monster5',
+      'v7_m1', 'v7_m2', 'v7_m3', 'v7_m4',
+      'v8_monster1', 'v8_monster2', 'v8_monster3', 'v8_monster4', 'v8_monster5',
+      'v9_monster1', 'v9_monster2', 'v9_monster3', 'v9_monster4',
+      'enemy_monster1', 'enemy_monster2', 'enemy_monster3', 'enemy_monster4', 'enemy_monster5',
+      'morev2_m1', 'morev2_m2', 'morev2_m3', 'morev2_m4', 'morev2_m5',
+      'morev3_m1', 'morev3_m2', 'morev3_m3', 'morev3_m4',
+      // Special
       'pumpkin_head', 'skull_knight', 'vampire', 'anubis',
       'skeleton_crusader1', 'skeleton_crusader2', 'skeleton_crusader3'
     ],
@@ -56,6 +95,14 @@ export class TrueProceduralPartsRenderer {
     this.scene = scene;
     // Parts are now preloaded in GameScene.preload()
     console.log('TrueProceduralPartsRenderer: Ready to create procedural monsters!');
+  }
+  
+  /**
+   * Set available monster types from seed loader (for compatibility)
+   */
+  setSeedMonsterTypes(monsterTypes: string[]): void {
+    console.log(`🎨 Seed loader provided ${monsterTypes.length} monster types`);
+    // Note: We're using our own comprehensive list above, but this maintains compatibility
   }
   
   /**
@@ -145,81 +192,184 @@ export class TrueProceduralPartsRenderer {
   }
   
   /**
+   * Validate a monster container to ensure it has all required parts and no overlaps
+   */
+  private validateMonster(container: Phaser.GameObjects.Container, hasWings: boolean): { valid: boolean; reason?: string } {
+    const parts = {
+      head: container.getByName('head') as Phaser.GameObjects.Sprite,
+      body: container.getByName('body') as Phaser.GameObjects.Sprite,
+      eyes: container.getByName('eyes') as Phaser.GameObjects.Sprite,
+      face: container.getByName('face') as Phaser.GameObjects.Sprite,
+      mouth: container.getByName('mouth') as Phaser.GameObjects.Sprite,
+      leftArm: container.getByName('leftArm') as Phaser.GameObjects.Sprite,
+      rightArm: container.getByName('rightArm') as Phaser.GameObjects.Sprite,
+      leftLeg: container.getByName('leftLeg') as Phaser.GameObjects.Sprite,
+      rightLeg: container.getByName('rightLeg') as Phaser.GameObjects.Sprite,
+      leftWing: container.getByName('leftWing') as Phaser.GameObjects.Sprite,
+      rightWing: container.getByName('rightWing') as Phaser.GameObjects.Sprite
+    };
+
+    // 1. CHECK REQUIRED PARTS
+    if (!parts.head) {
+      return { valid: false, reason: 'Missing head' };
+    }
+    if (!parts.body) {
+      return { valid: false, reason: 'Missing body' };
+    }
+
+    // Check facial features - must have EITHER a complete face OR separate eyes
+    const hasFace = parts.face !== null;
+    const hasEyes = parts.eyes !== null;
+    if (!hasFace && !hasEyes) {
+      return { valid: false, reason: 'Missing facial features (no face or eyes)' };
+    }
+
+    // Check locomotion - winged creatures need wings, non-winged need legs
+    if (hasWings) {
+      if (!parts.leftWing || !parts.rightWing) {
+        return { valid: false, reason: 'Flying creature missing wings' };
+      }
+    } else {
+      if (!parts.leftLeg || !parts.rightLeg) {
+        return { valid: false, reason: 'Walking creature missing legs' };
+      }
+    }
+
+    // 2. CHECK ALL SPRITES LOADED (have valid textures)
+    for (const [partName, sprite] of Object.entries(parts)) {
+      if (sprite && (!sprite.texture || sprite.texture.key === '__MISSING' || sprite.texture.key === '__WHITE')) {
+        return { valid: false, reason: `Sprite failed to load: ${partName}` };
+      }
+    }
+
+    // 3. CHECK FACIAL FEATURE SPACING (no overlap)
+    if (hasEyes && parts.mouth) {
+      const eyeBounds = parts.eyes.getBounds();
+      const mouthBounds = parts.mouth.getBounds();
+      
+      // Check if mouth overlaps with eyes
+      const overlap = Phaser.Geom.Rectangle.Overlaps(
+        new Phaser.Geom.Rectangle(eyeBounds.x, eyeBounds.y, eyeBounds.width, eyeBounds.height),
+        new Phaser.Geom.Rectangle(mouthBounds.x, mouthBounds.y, mouthBounds.width, mouthBounds.height)
+      );
+      
+      if (overlap) {
+        return { valid: false, reason: 'Eyes and mouth overlap' };
+      }
+      
+      // Also check if mouth is above eyes (incorrect positioning)
+      if (mouthBounds.centerY < eyeBounds.centerY) {
+        return { valid: false, reason: 'Mouth positioned above eyes' };
+      }
+    }
+
+    // All checks passed!
+    return { valid: true };
+  }
+
+  /**
    * Create a truly procedural monster by combining random parts
+   * NOW WITH VALIDATION - will retry until a valid monster is created
    */
   createProceduralMonster(x: number, y: number, appearance: MonsterAppearance, lifeStage: MonsterLifeStage): Phaser.GameObjects.Container {
-    const container = this.scene.add.container(x, y);
+    const maxAttempts = 10;
+    let attempts = 0;
     
-    // Use genetics to select parts
-    const headIndex = Math.floor((parseInt(appearance.headType.split('_')[1]) / 3) * this.availableParts.heads.length);
-    const bodyIndex = Math.floor((parseInt(appearance.bodyType.split('_')[1]) / 3) * this.availableParts.bodies.length);
-    
-    const selectedHead = this.availableParts.heads[Math.min(headIndex, this.availableParts.heads.length - 1)];
-    // ALL creatures should have bodies for visibility
-    const selectedBody = this.availableParts.bodies[Math.min(bodyIndex, this.availableParts.bodies.length - 1)];
-    
-    // Determine if this monster should have wings (based on mutation)
-    const hasWings = appearance.mutations.includes('wings') || Math.random() < 0.1;
-    
-    // Create body - EVERY MONSTER MUST HAVE A BODY!
-    let bodySprite = null;
-    const bodyKey = `${selectedBody}_body`;
-    
-    if (selectedBody && this.scene.textures.exists(bodyKey)) {
-      bodySprite = this.scene.add.sprite(0, 0, bodyKey);
-      this.applyPartTint(bodySprite, appearance.primaryColor);
-      bodySprite.setName('body');
-      container.add(bodySprite);
-    } else {
-      // FALLBACK: Create a basic body shape if sprite fails
-      console.warn(`⚠️ Body texture NOT found: ${bodyKey}, creating fallback body`);
-      const graphics = this.scene.add.graphics();
+    while (attempts < maxAttempts) {
+      attempts++;
+      const container = this.scene.add.container(x, y);
       
-      // Create an oval body shape
-      graphics.fillStyle(parseInt(appearance.primaryColor.replace('#', '0x')), 1);
-      graphics.fillEllipse(40, 30, 80, 60);
-      graphics.generateTexture('fallback_body_' + Date.now(), 80, 60);
+      // Use genetics to select parts
+      // FILTER out excluded heads
+      const availableHeads = this.availableParts.heads.filter(head => !this.excludedHeads.includes(head));
+      console.log(`🎨 Available heads after filtering: ${availableHeads.length}/${this.availableParts.heads.length} (excluded: ${this.excludedHeads.join(', ')})`);
       
-      bodySprite = this.scene.add.sprite(0, 0, 'fallback_body_' + Date.now());
-      bodySprite.setTint(parseInt(appearance.primaryColor.replace('#', '0x')));
-      bodySprite.setName('body');
-      graphics.destroy();
-      container.add(bodySprite);
+      // TRUE RANDOM SELECTION - every part has equal chance!
+      let selectedHead = availableHeads[Math.floor(Math.random() * availableHeads.length)];
+      const selectedBody = this.availableParts.bodies[Math.floor(Math.random() * this.availableParts.bodies.length)];
       
-      console.log('Created fallback body for monster');
-    }
-    
-    // Create head - EVERY MONSTER MUST HAVE A HEAD!
-    const headKey = `${selectedHead}_head`;
-    let headSprite = null;
-    if (this.scene.textures.exists(headKey)) {
-      console.log(`✅ Head texture found: ${headKey}`);
-      headSprite = this.scene.add.sprite(0, bodySprite ? -30 : 0, headKey);
-      this.applyPartTint(headSprite, appearance.secondaryColor);
-      headSprite.setName('head');
+      console.log(`🎲 RANDOM selection: ${selectedHead} head + ${selectedBody} body`);
       
-      // Ensure minimum size for visibility
-      if (headSprite.width < 20 || headSprite.height < 20) {
-        headSprite.setScale(Math.max(1.5, 20 / Math.min(headSprite.width, headSprite.height)));
+      // Determine if this monster should have wings (based on mutation)
+      const hasWings = appearance.mutations.includes('wings') || Math.random() < 0.1;
+      
+      // Create body - EVERY MONSTER MUST HAVE A BODY!
+      let bodySprite = null;
+      const bodyKey = `${selectedBody}_body`;
+      
+      // DEBUG: Log genetics colors to diagnose color coordination
+      console.log(`🎨 Colors - Primary: ${appearance.primaryColor}, Secondary: ${appearance.secondaryColor}, Tertiary: ${appearance.tertiaryColor}, Pattern: ${appearance.patternColor}`);
+      
+      if (selectedBody && this.scene.textures.exists(bodyKey)) {
+        bodySprite = this.scene.add.sprite(0, 0, bodyKey);
+        this.applyPartTint(bodySprite, appearance.primaryColor);
+        bodySprite.setName('body');
+        container.add(bodySprite);
+      } else {
+        // FALLBACK: Create a basic body shape if sprite fails
+        console.warn(`⚠️ Body texture NOT found: ${bodyKey}, creating fallback body`);
+        const graphics = this.scene.add.graphics();
+        
+        // Create an oval body shape
+        graphics.fillStyle(parseInt(appearance.primaryColor.replace('#', '0x')), 1);
+        graphics.fillEllipse(40, 30, 80, 60);
+        graphics.generateTexture('fallback_body_' + Date.now(), 80, 60);
+        
+        bodySprite = this.scene.add.sprite(0, 0, 'fallback_body_' + Date.now());
+        bodySprite.setTint(parseInt(appearance.primaryColor.replace('#', '0x')));
+        bodySprite.setName('body');
+        graphics.destroy();
+        container.add(bodySprite);
+        
+        console.log('Created fallback body for monster');
       }
+    
+      // Create head - EVERY MONSTER MUST HAVE A HEAD!
+      let headKey = `${selectedHead}_head`;
+      let headSprite = null;
+      // Keep trying random heads until we find one that exists (up to 10 attempts)
+      let headAttempts = 0;
+      while (!this.scene.textures.exists(headKey) && headAttempts < 10) {
+        selectedHead = availableHeads[Math.floor(Math.random() * availableHeads.length)];
+        headKey = `${selectedHead}_head`;
+        headAttempts++;
+      }
+      
+      if (this.scene.textures.exists(headKey)) {
+        console.log(`✅ Head texture found: ${headKey} (attempts: ${headAttempts})`);
+        // Position head ON TOP of body, like a neck connection
+        const headY = bodySprite ? -bodySprite.height * 0.4 : 0; // Connect at 40% of body height
+        headSprite = this.scene.add.sprite(0, headY, headKey);
+        this.applyPartTint(headSprite, appearance.secondaryColor);
+        headSprite.setName('head');
+        
+        // Smart scaling for heads - handle both oversized and undersized
+        if (bodySprite) {
+        const bodyWidth = bodySprite.width;
+        const headWidth = headSprite.width;
+        const headHeight = headSprite.height;
+        
+        // Detect oversized heads (especially skulls) - head should not be wider than 1.2x body
+        if (headWidth > bodyWidth * 1.2 || headHeight > bodyWidth * 1.2) {
+          const scaleRatio = (bodyWidth * 1.0) / Math.max(headWidth, headHeight);
+          headSprite.setScale(scaleRatio);
+          console.log(`🔧 Scaled down oversized head ${headKey}: ${headWidth}x${headHeight} -> scale ${scaleRatio.toFixed(2)}`);
+        }
+        // Ensure minimum size for visibility
+        else if (headWidth < 20 || headHeight < 20) {
+          headSprite.setScale(Math.max(1.5, 20 / Math.min(headWidth, headHeight)));
+        }
+      } else {
+        // No body reference - just ensure minimum size
+        if (headSprite.width < 20 || headSprite.height < 20) {
+          headSprite.setScale(Math.max(1.5, 20 / Math.min(headSprite.width, headSprite.height)));
+        }
+      }
+      
       container.add(headSprite);
     } else {
-      // FALLBACK: Create a circular head if sprite fails
-      console.warn(`❌ Head texture NOT found: ${headKey}, creating fallback head`);
-      const graphics = this.scene.add.graphics();
-      
-      // Create a decent-sized head
-      graphics.fillStyle(parseInt(appearance.secondaryColor.replace('#', '0x')), 1);
-      graphics.fillCircle(25, 25, 25);
-      graphics.generateTexture('fallback_head_' + Date.now(), 50, 50);
-      
-      headSprite = this.scene.add.sprite(0, bodySprite ? -30 : 0, 'fallback_head_' + Date.now());
-      headSprite.setTint(parseInt(appearance.secondaryColor.replace('#', '0x')));
-      headSprite.setName('head');
-      graphics.destroy();
-      container.add(headSprite);
-      
-      console.log('Created fallback head for monster');
+      console.warn(`❌ Could not find ANY head texture after ${attempts} attempts! Skipping head.`);
+      // Don't create fallback - just skip the head entirely
     }
     
     // Add face with blinking capability
@@ -247,6 +397,321 @@ export class TrueProceduralPartsRenderer {
       }
     }
     
+    // ADD FACE OR EYES/MOUTH (mutually exclusive)
+    // Position eyes/face ON the head's center, accounting for actual displayed size after scaling
+    let eyeY = -10; // Default position
+    if (headSprite) {
+      // Eyes should be at the head's Y position (center of head sprite)
+      // No offset needed since headSprite.y is already at the head's center
+      eyeY = headSprite.y;
+      console.log(`👁️ Positioning eyes at head center: Y=${eyeY.toFixed(1)}`);
+    }
+    let eyesAdded = false;
+    let faceAdded = false;
+    
+    // First, try to find a complete FACE sprite
+    const faceSearchKeys = [
+      `${selectedHead}_Face 01`,
+      `${selectedHead}_Face 02`,
+      `${selectedHead}_Face 03`,
+      `${selectedHead}_face 01`,
+      `${selectedHead}_face 02`,
+      `${selectedHead}_face 03`,
+      `${selectedHead.replace('_head', '')}_Face 01`,
+      `${selectedHead.replace('_head', '')}_Face 02`,
+      `${selectedHead.replace('_head', '')}_Face 03`
+    ];
+    
+    // Try to add complete face (50% chance if it exists)
+    if (Math.random() < 0.5) {
+      for (const faceKey of faceSearchKeys) {
+        if (faceKey && this.scene.textures.exists(faceKey)) {
+          console.log(`✅ Found FACE sprite: ${faceKey}`);
+          const faceSprite = this.scene.add.sprite(0, eyeY, faceKey);
+          faceSprite.setDepth(25);
+          faceSprite.setName('face');
+          faceSprite.setScale(1.0);
+          
+          // Apply color tint to face
+          const colorScheme = this.generateColorScheme(appearance);
+          const tintedColor = this.blendColors(0xFFFFFF, colorScheme.accentColor, 0.15);
+          faceSprite.setTint(tintedColor);
+          
+          container.add(faceSprite);
+          faceAdded = true;
+          console.log(`👤 Using complete FACE - skipping separate eyes/mouth`);
+          break;
+        }
+      }
+    }
+    
+    // Only add separate eyes if NO face was added
+    if (!faceAdded) {
+      // COMPREHENSIVE eye texture search - try EVERY possible variation
+      const eyeSearchKeys = [
+      // Standard patterns
+      `${selectedHead}_eye`,
+      `${selectedHead}_eyes`,
+      `${selectedHead}_Eye`,
+      `${selectedHead}_Eyes`,
+      // With underscores
+      `${selectedHead}_eye_b`,
+      `${selectedHead}_eye_f`,
+      `${selectedHead}_Eye_B`,
+      `${selectedHead}_Eye_F`,
+      // Numbered
+      `${selectedHead}_eye1`,
+      `${selectedHead}_eye2`,
+      `${selectedHead}_Eye1`,
+      `${selectedHead}_Eye2`,
+      // Body eyes (only if body exists)
+      ...(selectedBody ? [
+        `${selectedBody}_eye`,
+        `${selectedBody}_eyes`,
+        `${selectedBody}_Eye`,
+        `${selectedBody}_Eyes`,
+        `${selectedBody}_eye_b`,
+        `${selectedBody}_eye_f`,
+        `${selectedBody}_Eye_B`,
+        `${selectedBody}_Eye_F`,
+        `${selectedBody}_eye1`,
+        `${selectedBody}_Eye1`,
+        `${selectedBody.replace('_body', '')}_Eye`,
+        `${selectedBody.replace('_body', '')}_eye`,
+        `${selectedBody.replace('_body', '')}_Eye_B`,
+        `${selectedBody.replace('_body', '')}_Eye_F`
+      ] : []),
+      // Without prefixes (direct)
+      `${selectedHead.replace('_head', '')}_Eye`,
+      `${selectedHead.replace('_head', '')}_eye`,
+      `${selectedHead.replace('_head', '')}_Eye_B`,
+      `${selectedHead.replace('_head', '')}_Eye_F`,
+      `${selectedHead.replace('_head', '')}_Eye1`
+    ];
+    
+    // Find a valid eye texture
+    let eyeTextureKey: string | null = null;
+    for (const eyeKey of eyeSearchKeys) {
+      if (eyeKey && this.scene.textures.exists(eyeKey)) {
+        eyeTextureKey = eyeKey;
+        break;
+      }
+    }
+    
+    // If we found an eye texture, create MULTIPLE EYES with VARIETY
+    let eyeSprite: Phaser.GameObjects.Sprite | null = null;
+    if (eyeTextureKey) {
+      console.log(`✅ Found eye sprite: ${eyeTextureKey}`);
+      
+      // DYNAMIC EYE COUNT - 1, 2, 3, 4, or 5 eyes!
+      const eyeCountWeights = [
+        { count: 1, weight: 15 },  // 15% - cyclops
+        { count: 2, weight: 50 },  // 50% - normal
+        { count: 3, weight: 20 },  // 20% - triplet
+        { count: 4, weight: 10 },  // 10% - quad
+        { count: 5, weight: 5 }    // 5% - pentacle
+      ];
+      
+      const totalWeight = eyeCountWeights.reduce((sum, item) => sum + item.weight, 0);
+      const random = Math.random() * totalWeight;
+      let cumulative = 0;
+      let eyeCount = 2; // default
+      
+      for (const item of eyeCountWeights) {
+        cumulative += item.weight;
+        if (random <= cumulative) {
+          eyeCount = item.count;
+          break;
+        }
+      }
+      
+      // DYNAMIC EYE SIZING based on head size and eye count
+      const headWidth = headSprite ? headSprite.displayWidth : 100;
+      let eyeScale = 0.6; // Base scale
+      
+      // Smaller eyes for more eyes
+      if (eyeCount === 3) eyeScale = 0.5;
+      else if (eyeCount === 4) eyeScale = 0.4;
+      else if (eyeCount >= 5) eyeScale = 0.35;
+      
+      // Scale eyes relative to head size (eyes should be ~15% of head width)
+      const singleEyeTexture = this.scene.textures.get(eyeTextureKey);
+      const eyeTextureWidth = singleEyeTexture.getSourceImage().width;
+      const targetEyeWidth = headWidth * 0.15; // 15% of head width per eye
+      eyeScale = targetEyeWidth / eyeTextureWidth;
+      
+      // Clamp scale to reasonable bounds
+      eyeScale = Math.max(0.2, Math.min(1.0, eyeScale));
+      
+      console.log(`👁️ Creating ${eyeCount} eyes with scale ${eyeScale.toFixed(2)}`);
+      
+      // CREATE EYES based on count
+      if (eyeCount === 1) {
+        // Single centered eye (cyclops)
+        eyeSprite = this.scene.add.sprite(0, eyeY, eyeTextureKey);
+        eyeSprite.setDepth(25);
+        eyeSprite.setName('eyes');
+        eyeSprite.setScale(eyeScale * 1.3); // Slightly larger for single eye
+        container.add(eyeSprite);
+      } else if (eyeCount === 2) {
+        // Two eyes (standard)
+        const eyeSpacing = headWidth * 0.2;
+        eyeSprite = this.scene.add.sprite(-eyeSpacing, eyeY, eyeTextureKey);
+        eyeSprite.setDepth(25);
+        eyeSprite.setName('eyes');
+        eyeSprite.setScale(eyeScale);
+        container.add(eyeSprite);
+        
+        const rightEye = this.scene.add.sprite(eyeSpacing, eyeY, eyeTextureKey);
+        rightEye.setDepth(25);
+        rightEye.setName('rightEye');
+        rightEye.setScale(eyeScale);
+        container.add(rightEye);
+      } else if (eyeCount === 3) {
+        // Three eyes in a triangle
+        const eyeSpacing = headWidth * 0.18;
+        eyeSprite = this.scene.add.sprite(0, eyeY - 5, eyeTextureKey); // Top center
+        eyeSprite.setDepth(25);
+        eyeSprite.setName('eyes');
+        eyeSprite.setScale(eyeScale);
+        container.add(eyeSprite);
+        
+        const leftEye = this.scene.add.sprite(-eyeSpacing, eyeY + 8, eyeTextureKey);
+        leftEye.setDepth(25);
+        leftEye.setName('leftEye');
+        leftEye.setScale(eyeScale);
+        container.add(leftEye);
+        
+        const rightEye = this.scene.add.sprite(eyeSpacing, eyeY + 8, eyeTextureKey);
+        rightEye.setDepth(25);
+        rightEye.setName('rightEye');
+        rightEye.setScale(eyeScale);
+        container.add(rightEye);
+      } else if (eyeCount === 4) {
+        // Four eyes in a square grid
+        const eyeSpacingX = headWidth * 0.15;
+        const eyeSpacingY = 10;
+        
+        const eyes = [
+          { x: -eyeSpacingX, y: eyeY - eyeSpacingY, name: 'eyes' },
+          { x: eyeSpacingX, y: eyeY - eyeSpacingY, name: 'topRightEye' },
+          { x: -eyeSpacingX, y: eyeY + eyeSpacingY, name: 'bottomLeftEye' },
+          { x: eyeSpacingX, y: eyeY + eyeSpacingY, name: 'bottomRightEye' }
+        ];
+        
+        eyes.forEach((eyePos, i) => {
+          const eye = this.scene.add.sprite(eyePos.x, eyePos.y, eyeTextureKey);
+          eye.setDepth(25);
+          eye.setName(eyePos.name);
+          eye.setScale(eyeScale);
+          container.add(eye);
+          if (i === 0) eyeSprite = eye;
+        });
+      } else {
+        // Five or more eyes in a circular pattern
+        const radius = headWidth * 0.2;
+        for (let i = 0; i < eyeCount; i++) {
+          const angle = (i / eyeCount) * Math.PI * 2 - Math.PI / 2; // Start at top
+          const x = Math.cos(angle) * radius;
+          const y = eyeY + Math.sin(angle) * radius;
+          
+          const eye = this.scene.add.sprite(x, y, eyeTextureKey);
+          eye.setDepth(25);
+          eye.setName(i === 0 ? 'eyes' : `eye${i}`);
+          eye.setScale(eyeScale);
+          container.add(eye);
+          if (i === 0) eyeSprite = eye;
+        }
+      }
+      
+      eyesAdded = true;
+    }
+    
+    // If eyes were added, apply color tinting to ALL eyes
+    if (eyesAdded) {
+      const colorScheme = this.generateColorScheme(appearance);
+      
+      // Apply tinting to ALL eye sprites in the container
+      const eyeTint = this.blendColors(0xFFFFFF, colorScheme.baseColor, 0.3);
+      container.list.forEach((child: any) => {
+        if (child.name && (child.name.includes('eye') || child.name.includes('Eye'))) {
+          child.setTint(eyeTint);
+        }
+      });
+      console.log(`🎨 Tinted all eyes with body color (30%)`);
+      
+      // ADD EYEBROWS (50% chance) with color coordination
+      if (Math.random() < 0.5 && eyeSprite) {
+        const eyebrowKeys = [
+          'v5_monster1_EyeBrow01',
+          'v5_monster1_EyeBrow02',
+          'v5_monster3_EyeBrow01',
+          'v5_monster3_EyeBrow02'
+        ];
+        
+        const randomBrow = eyebrowKeys[Math.floor(Math.random() * eyebrowKeys.length)];
+        if (this.scene.textures.exists(randomBrow)) {
+          const eyebrowSprite = this.scene.add.sprite(0, eyeY - 8, randomBrow);
+          eyebrowSprite.setDepth(24); // Behind eyes
+          eyebrowSprite.setName('eyebrows');
+          eyebrowSprite.setScale(1.0);
+          
+          // Tint eyebrows to match head/dark color (50% blend for shadow effect)
+          const browTint = this.blendColors(0x000000, colorScheme.darkColor, 0.5);
+          eyebrowSprite.setTint(browTint);
+          
+          container.add(eyebrowSprite);
+          console.log(`✅ Added color-coordinated eyebrows`);
+        }
+      }
+      
+      // ADD MOUTH SPRITES with COLLISION DETECTION to prevent overlap
+      const mouthSearchKeys = [
+        `${selectedHead}_mouth`,
+        `${selectedHead}_Mouth`,
+        `${selectedHead}_mouth1`,
+        `${selectedHead}_Mouth1`,
+        `${selectedHead.replace('_head', '')}_mouth`,
+        `${selectedHead.replace('_head', '')}_Mouth`,
+        `${selectedBody}_mouth`,
+        `${selectedBody}_Mouth`
+      ];
+      
+      for (const mouthKey of mouthSearchKeys) {
+        if (mouthKey && this.scene.textures.exists(mouthKey)) {
+          // Smart mouth positioning - ALWAYS below eyes with proper spacing
+          let mouthY = eyeY + 30; // Default: 30px below eye center
+          
+          // FACIAL FEATURE COLLISION DETECTION - prevent overlap
+          if (eyeSprite) {
+            const eyeBottom = eyeY + (eyeSprite.displayHeight / 2);
+            const minSeparation = 20; // Minimum gap between eye bottom and mouth center
+            
+            // Mouth must be AT LEAST minSeparation below the bottom of eyes
+            const safeMouthY = eyeBottom + minSeparation;
+            
+            // Use whichever is LOWER (higher Y value = lower on screen)
+            mouthY = Math.max(mouthY, safeMouthY);
+            console.log(`👄 Mouth positioned at Y=${mouthY.toFixed(1)} (eyes bottom: ${eyeBottom.toFixed(1)})`);
+          }
+          
+          const mouthSprite = this.scene.add.sprite(0, mouthY, mouthKey);
+          mouthSprite.setDepth(25); // Same as eyes
+          mouthSprite.setName('mouth');
+          mouthSprite.setScale(1.0);
+          
+          // Tint mouth to match accent color (25% blend)
+          const mouthTint = this.blendColors(0xFFFFFF, colorScheme.accentColor, 0.25);
+          mouthSprite.setTint(mouthTint);
+          
+          container.add(mouthSprite);
+          console.log(`✅ Mouth added: ${mouthKey}`);
+          break;
+        }
+      }
+    }
+    } // Close the if (!faceAdded) block
+    
     // Add limbs or wings
     if (hasWings) {
       // CRITICAL: Flying creatures MUST have a body too!
@@ -266,25 +731,42 @@ export class TrueProceduralPartsRenderer {
         container.addAt(bodySprite, 0); // Add at bottom so head appears on top
       }
       
-      // Add wings - SWAPPED! Left wing on RIGHT, right wing on LEFT (they were backwards)
+      // Add wings - SWAP LEFT AND RIGHT (sprites are designed for opposite sides)
+      const bodyWidth = bodySprite ? bodySprite.displayWidth : 80;
+      const bodyHeight = bodySprite ? bodySprite.displayHeight : 60;
+      
+      // Position wings at body edges
+      const leftWingX = -(bodyWidth * 0.4); // Left side position
+      const rightWingX = (bodyWidth * 0.4); // Right side position
+      const wingY = 0; // Center vertically on body
+      
+      // THE FIX: Left wing sprite goes on RIGHT side, Right wing sprite goes on LEFT side
+      // NO FLIPPING - sprites are pre-designed, just swap their positions
+      
+      // Put LEFT wing sprite on RIGHT side (it naturally points right)
       const leftWingKey = 'flying01_left_wing';
       if (this.scene.textures.exists(leftWingKey)) {
-        const leftWingSprite = this.scene.add.sprite(100, 0, leftWingKey); // LEFT wing on RIGHT side
+        const leftWingSprite = this.scene.add.sprite(rightWingX, wingY, leftWingKey);
         this.applyPartTint(leftWingSprite, appearance.patternColor);
-        leftWingSprite.setDepth(-5); // Far behind everything
-        leftWingSprite.setName('leftWing');
-        leftWingSprite.setOrigin(0, 0.5); // Attach at left edge (swapped)
-        container.add(leftWingSprite);
+        leftWingSprite.setName('rightWing');
+        leftWingSprite.setOrigin(0.2, 0.5); // Attach near body
+        leftWingSprite.setScale(1.0);
+        // Add BEFORE body so it appears behind
+        const bodyIndex = container.getIndex(bodySprite);
+        container.addAt(leftWingSprite, bodyIndex);
       }
       
+      // Put RIGHT wing sprite on LEFT side (it naturally points left)
       const rightWingKey = 'flying01_right_wing';
       if (this.scene.textures.exists(rightWingKey)) {
-        const rightWingSprite = this.scene.add.sprite(-100, 0, rightWingKey); // RIGHT wing on LEFT side
+        const rightWingSprite = this.scene.add.sprite(leftWingX, wingY, rightWingKey);
         this.applyPartTint(rightWingSprite, appearance.patternColor);
-        rightWingSprite.setDepth(-5); // Far behind everything
-        rightWingSprite.setName('rightWing');
-        rightWingSprite.setOrigin(1, 0.5); // Attach at right edge (swapped)
-        container.add(rightWingSprite);
+        rightWingSprite.setName('leftWing');
+        rightWingSprite.setOrigin(0.8, 0.5); // Attach near body
+        rightWingSprite.setScale(1.0);
+        // Add BEFORE body so it appears behind
+        const bodyIndex = container.getIndex(bodySprite);
+        container.addAt(rightWingSprite, bodyIndex);
       }
     } else {
       // SIMPLIFIED - Skip limbs for now to diagnose visibility issue
@@ -295,36 +777,34 @@ export class TrueProceduralPartsRenderer {
       
       // DYNAMICALLY POSITION LIMBS BASED ON BODY SIZE
       
-      // Get actual body dimensions
+      // Get actual DISPLAYED body dimensions for perfect attachment
       let bodyWidth = 80; // Default if no body
       let bodyHeight = 60; // Default if no body
       let shoulderY = 0; // Where arms attach
       let hipY = 30; // Where legs attach
       
       if (bodySprite) {
-        // Get actual body sprite dimensions
-        const bodyTexture = this.scene.textures.get(bodySprite.texture.key);
-        if (bodyTexture && bodyTexture.source[0]) {
-          bodyWidth = bodyTexture.source[0].width || 80;
-          bodyHeight = bodyTexture.source[0].height || 60;
-        }
+        // Use displayWidth/displayHeight for scaled dimensions
+        bodyWidth = bodySprite.displayWidth;
+        bodyHeight = bodySprite.displayHeight;
         
         // Calculate attachment points based on body size
         shoulderY = -bodyHeight * 0.2; // Arms attach at upper 20% of body
         hipY = bodyHeight * 0.4; // Legs attach at lower part of body
       }
       
-      // ARM POSITIONING - Attached directly to body edges
-      const armSpread = bodyWidth * 0.45; // Arms at edge of body (no gap)
+      // ARM POSITIONING - Attached at exact body edges for seamless connection
+      const leftArmX = -(bodyWidth * 0.5); // Left edge of body
+      const rightArmX = (bodyWidth * 0.5); // Right edge of body
       const armHeight = shoulderY;
       
       const leftArmKey = `${selectedLimbType}_left_upper_arm`;
       if (this.scene.textures.exists(leftArmKey)) {
-        const leftArm = this.scene.add.sprite(-armSpread, armHeight, leftArmKey);
-        this.applyPartTint(leftArm, appearance.primaryColor);
+        const leftArm = this.scene.add.sprite(leftArmX, armHeight, leftArmKey);
+        this.applyPartTint(leftArm, appearance.patternColor); // Pattern color for arms
         leftArm.setDepth(-1);
         leftArm.setName('leftArm');
-        leftArm.setOrigin(1, 0.5); // Attach from right edge of arm sprite
+        leftArm.setOrigin(1, 0.5); // Attach RIGHT edge of arm to LEFT edge of body
         leftArm.setAlpha(0.9);
         leftArm.setScale(0.8);
         container.add(leftArm);
@@ -332,11 +812,11 @@ export class TrueProceduralPartsRenderer {
       
       const rightArmKey = `${selectedLimbType}_right_upper_arm`;
       if (this.scene.textures.exists(rightArmKey)) {
-        const rightArm = this.scene.add.sprite(armSpread, armHeight, rightArmKey);
-        this.applyPartTint(rightArm, appearance.primaryColor);
+        const rightArm = this.scene.add.sprite(rightArmX, armHeight, rightArmKey);
+        this.applyPartTint(rightArm, appearance.patternColor); // Pattern color for arms
         rightArm.setDepth(-1);
         rightArm.setName('rightArm');
-        rightArm.setOrigin(0, 0.5); // Attach from left edge of arm sprite
+        rightArm.setOrigin(0, 0.5); // Attach LEFT edge of arm to RIGHT edge of body
         rightArm.setAlpha(0.9);
         rightArm.setScale(0.8);
         container.add(rightArm);
@@ -353,17 +833,18 @@ export class TrueProceduralPartsRenderer {
         scaleGeneValue = Math.max(0.5, Math.min(2, appearance.scale)); // Clamp 0.5-2
       }
       
-      // Leg spread based on body width
-      const legSpread = bodyWidth * 0.3 + (Math.random() * 10); // Legs closer to center than arms
+      // LEG POSITIONING - Attached slightly inward from body edges (hip width)
+      const leftLegX = -(bodyWidth * 0.35); // Slightly inside left edge
+      const rightLegX = (bodyWidth * 0.35); // Slightly inside right edge
       const legY = hipY; // Attach at hip position
       
       const leftLegKey = `${selectedLimbType}_left_leg`;
       if (this.scene.textures.exists(leftLegKey)) {
-        const leftLeg = this.scene.add.sprite(-legSpread, legY, leftLegKey);
-        this.applyPartTint(leftLeg, appearance.primaryColor);
+        const leftLeg = this.scene.add.sprite(leftLegX, legY, leftLegKey);
+        this.applyPartTint(leftLeg, appearance.tertiaryColor); // Different color for legs
         leftLeg.setDepth(-2); // Put legs behind body
         leftLeg.setName('leftLeg'); // Name for animation
-        leftLeg.setOrigin(0.5, 0); // Anchor at top of leg
+        leftLeg.setOrigin(0.5, 0); // Anchor at top center of leg
         // Slightly vary leg size genetically
         const legScale = 0.9 + (Math.random() * 0.2);
         leftLeg.setScale(legScale);
@@ -372,11 +853,11 @@ export class TrueProceduralPartsRenderer {
       
       const rightLegKey = `${selectedLimbType}_right_leg`;
       if (this.scene.textures.exists(rightLegKey)) {
-        const rightLeg = this.scene.add.sprite(legSpread, legY, rightLegKey);
-        this.applyPartTint(rightLeg, appearance.primaryColor);
+        const rightLeg = this.scene.add.sprite(rightLegX, legY, rightLegKey);
+        this.applyPartTint(rightLeg, appearance.tertiaryColor); // Different color for legs
         rightLeg.setDepth(-2); // Put legs behind body
         rightLeg.setName('rightLeg'); // Name for animation
-        rightLeg.setOrigin(0.5, 0); // Anchor at top of leg
+        rightLeg.setOrigin(0.5, 0); // Anchor at top center of leg
         // Match leg scale for symmetry (with tiny variation)
         const legScale = 0.9 + (Math.random() * 0.2);
         rightLeg.setScale(legScale);
@@ -384,20 +865,11 @@ export class TrueProceduralPartsRenderer {
       }
     }
     
-    // Add weapon if mutation exists
-    if (appearance.mutations.includes('weapon_arm') || appearance.mutations.includes('weapon')) {
-      const weaponTypes = ['monster05', 'monster06'];
-      const weaponType = weaponTypes[Math.floor(Math.random() * weaponTypes.length)];
-      const weaponKey = `${weaponType}_weapon`;
-      if (this.scene.textures.exists(weaponKey)) {
-        const weapon = this.scene.add.sprite(25, -5, weaponKey);
-        weapon.setTint(0xFF0000);
-        container.add(weapon);
-      }
-    }
+    // Weapons removed - not needed for this game
     
-    // Apply life stage scaling - slightly bigger for visibility
-    let baseScale = 0.12; // Increased from 0.08 for better visibility
+    // Apply life stage scaling - 1.5-2 blocks tall (16px = 1 block)
+    // Target: 24-32px tall monsters = 0.06-0.08 scale for ~400px sprites
+    let baseScale = 0.07; // Balanced size for 1.5-2 block height
     let scale = baseScale;
     
     switch (lifeStage) {
@@ -473,13 +945,7 @@ export class TrueProceduralPartsRenderer {
         container.add(emergencyBody);
       }
       
-      // Add emergency head if missing  
-      if (!headSprite) {
-        const emergencyHead = this.scene.add.circle(0, -30, 25, 0xFFFF00);
-        emergencyHead.setStrokeStyle(2, 0xFF0000);
-        emergencyHead.setName('emergency_head');
-        container.add(emergencyHead);
-      }
+      // No emergency head - better to have no head than a placeholder circle
     }
     
     // AGGRESSIVE VISIBILITY FIX - Force everything visible
@@ -504,19 +970,53 @@ export class TrueProceduralPartsRenderer {
     
     console.log(`Created TRUE procedural monster: ${selectedHead} head + ${selectedBody || 'no'} body + ${hasWings ? 'wings' : 'limbs'} at (${x}, ${y}) with scale ${scale}, movement: ${movementType}, children: ${container.list.length}`);
     
-    return container;
+      // VALIDATE THE MONSTER
+      const validation = this.validateMonster(container, hasWings);
+      
+      if (validation.valid) {
+        console.log(`✅ MONSTER VALIDATION PASSED (attempt ${attempts})`);
+        return container;
+      } else {
+        console.warn(`❌ MONSTER VALIDATION FAILED (attempt ${attempts}/${maxAttempts}): ${validation.reason}`);
+        // Destroy the invalid monster and try again
+        container.destroy();
+      }
+    }
+    
+    // If we get here, all attempts failed - return a basic fallback monster
+    console.error(`🚨 FAILED to create valid monster after ${maxAttempts} attempts! Creating minimal fallback.`);
+    const fallbackContainer = this.scene.add.container(x, y);
+    
+    // Create minimal viable monster
+    const fallbackBody = this.scene.add.circle(0, 0, 20, 0xFF0000);
+    fallbackBody.setName('body');
+    const fallbackHead = this.scene.add.circle(0, -25, 15, 0xFF6600);
+    fallbackHead.setName('head');
+    fallbackContainer.add([fallbackBody, fallbackHead]);
+    
+    return fallbackContainer;
   }
   
   /**
    * Apply genetic color tinting to a sprite part
    */
-  private applyPartTint(sprite: Phaser.GameObjects.Sprite, color: string): void {
+  private applyPartTint(sprite: Phaser.GameObjects.Sprite, color: string | undefined): void {
     try {
+      if (!color || color === '#FFFFFF' || color === '#ffffff') {
+        // White/missing color - generate a vibrant random color
+        const vibrantColors = [0xFF6B35, 0x4ECDC4, 0xFF006E, 0x8338EC, 0xFB5607, 0x06FFA5, 0xFF9E00];
+        const randomColor = vibrantColors[Math.floor(Math.random() * vibrantColors.length)];
+        sprite.setTint(randomColor);
+        return;
+      }
+      
       const tintColor = parseInt(color.replace('#', '0x'));
       sprite.setTint(tintColor);
     } catch (e) {
-      // Apply random tint if parsing fails
-      sprite.setTint(0xFFFFFF * Math.random());
+      // Apply vibrant random tint if parsing fails
+      const vibrantColors = [0xFF6B35, 0x4ECDC4, 0xFF006E, 0x8338EC, 0xFB5607, 0x06FFA5, 0xFF9E00];
+      const randomColor = vibrantColors[Math.floor(Math.random() * vibrantColors.length)];
+      sprite.setTint(randomColor);
     }
   }
   
@@ -996,5 +1496,380 @@ export class TrueProceduralPartsRenderer {
         rightHand.scaleY = 1;
       }
     }
+  }
+  
+  /**
+   * Create diverse animal-inspired eyes (no white eyeballs)
+   * Returns eye graphics based on animal type
+   */
+  private createAnimalEyes(
+    container: Phaser.GameObjects.Container,
+    eyeY: number,
+    appearance: any,
+    colorScheme: any
+  ): void {
+    // Determine eye type based on genetics
+    const eyeTypeSeed = (appearance.primaryColor.charCodeAt(0) * 13 + 
+                         appearance.secondaryColor.charCodeAt(1) * 17) % 100;
+    
+    let eyeType: string;
+    if (eyeTypeSeed < 15) eyeType = 'cat';           // 15% Cat eyes (vertical slits)
+    else if (eyeTypeSeed < 28) eyeType = 'reptile';  // 13% Reptile (horizontal slits)
+    else if (eyeTypeSeed < 40) eyeType = 'goat';     // 12% Goat (rectangular)
+    else if (eyeTypeSeed < 50) eyeType = 'insect';   // 10% Insect (compound)
+    else if (eyeTypeSeed < 60) eyeType = 'fish';     // 10% Fish (large pupil)
+    else if (eyeTypeSeed < 68) eyeType = 'octopus';  // 8% Octopus (W-shaped)
+    else if (eyeTypeSeed < 75) eyeType = 'bird';     // 7% Bird (bright colored)
+    else if (eyeTypeSeed < 82) eyeType = 'spider';   // 7% Spider (multiple small)
+    else if (eyeTypeSeed < 88) eyeType = 'gecko';    // 6% Gecko (no eyelids)
+    else if (eyeTypeSeed < 93) eyeType = 'snake';    // 5% Snake (solid color)
+    else eyeType = 'alien';                           // 7% Alien (glow)
+    
+    const eyeSize = 8 + (this.getPartVariation(appearance, 'eye_size') * 6); // 8-14px
+    
+    console.log(`👁️ Creating ${eyeType} eyes at size ${eyeSize.toFixed(1)}px`);
+    
+    switch (eyeType) {
+      case 'cat':
+        // CAT EYES: Vertical slit pupils, colored iris
+        this.createCatEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'reptile':
+        // REPTILE: Horizontal slit, golden/green iris
+        this.createReptileEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'goat':
+        // GOAT: Rectangular horizontal pupils
+        this.createGoatEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'insect':
+        // INSECT: Compound eyes (hexagonal pattern)
+        this.createInsectEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'fish':
+        // FISH: Large dark pupil, no white
+        this.createFishEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'octopus':
+        // OCTOPUS: W-shaped pupil
+        this.createOctopusEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'bird':
+        // BIRD: Bright colored iris with small pupil
+        this.createBirdEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'spider':
+        // SPIDER: Multiple small black eyes
+        this.createSpiderEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'gecko':
+        // GECKO: Vertical slit, no eyelids
+        this.createGeckoEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'snake':
+        // SNAKE: Solid colored, no pupil visible
+        this.createSnakeEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+        
+      case 'alien':
+        // ALIEN: Glowing, no pupil
+        this.createAlienEyes(container, eyeY, eyeSize, colorScheme);
+        break;
+    }
+  }
+  
+  private createCatEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    positions.forEach(x => {
+      // Colored iris
+      const iris = this.scene.add.circle(x, eyeY, size, colorScheme.accentColor);
+      iris.setDepth(25);
+      container.add(iris);
+      
+      // Vertical slit pupil
+      const pupil = this.scene.add.rectangle(x, eyeY, size * 0.2, size * 1.4, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+      
+      // Highlight
+      const highlight = this.scene.add.circle(x + size * 0.3, eyeY - size * 0.3, size * 0.2, 0xFFFFFF, 0.8);
+      highlight.setDepth(27);
+      container.add(highlight);
+    });
+  }
+  
+  private createReptileEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    const irisColor = 0xCCCC00; // Golden/green
+    
+    positions.forEach(x => {
+      // Golden iris
+      const iris = this.scene.add.circle(x, eyeY, size, irisColor);
+      iris.setDepth(25);
+      container.add(iris);
+      
+      // Horizontal slit pupil
+      const pupil = this.scene.add.rectangle(x, eyeY, size * 1.4, size * 0.15, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+    });
+  }
+  
+  private createGoatEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    
+    positions.forEach(x => {
+      // Light colored iris
+      const iris = this.scene.add.circle(x, eyeY, size, 0xDDCC99);
+      iris.setDepth(25);
+      container.add(iris);
+      
+      // Rectangular horizontal pupil
+      const pupil = this.scene.add.rectangle(x, eyeY, size * 1.2, size * 0.4, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+    });
+  }
+  
+  private createInsectEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size * 1.2, size * 1.2];
+    
+    positions.forEach(x => {
+      // Large compound eye (dark, multi-faceted look)
+      const eye = this.scene.add.circle(x, eyeY, size * 1.3, 0x000000);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // Hexagonal highlights for compound effect
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI * 2) / 6;
+        const hx = x + Math.cos(angle) * size * 0.4;
+        const hy = eyeY + Math.sin(angle) * size * 0.4;
+        const facet = this.scene.add.circle(hx, hy, size * 0.15, 0x444444);
+        facet.setDepth(26);
+        container.add(facet);
+      }
+    });
+  }
+  
+  private createFishEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    
+    positions.forEach(x => {
+      // Large dark eye with metallic sheen
+      const eye = this.scene.add.circle(x, eyeY, size, 0x1a1a1a);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // Large pupil
+      const pupil = this.scene.add.circle(x, eyeY, size * 0.7, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+      
+      // Bright highlight (underwater reflection)
+      const highlight = this.scene.add.circle(x + size * 0.4, eyeY - size * 0.4, size * 0.35, 0xCCFFFF, 0.9);
+      highlight.setDepth(27);
+      container.add(highlight);
+    });
+  }
+  
+  private createOctopusEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    
+    positions.forEach(x => {
+      // Large dark eye
+      const eye = this.scene.add.circle(x, eyeY, size, 0x2a2a2a);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // W-shaped pupil (approximated with rectangles)
+      const pupilWidth = size * 0.15;
+      const p1 = this.scene.add.rectangle(x - size * 0.3, eyeY, pupilWidth, size * 0.8, 0x000000);
+      p1.setDepth(26);
+      container.add(p1);
+      
+      const p2 = this.scene.add.rectangle(x, eyeY + size * 0.2, pupilWidth, size * 0.5, 0x000000);
+      p2.setDepth(26);
+      container.add(p2);
+      
+      const p3 = this.scene.add.rectangle(x + size * 0.3, eyeY, pupilWidth, size * 0.8, 0x000000);
+      p3.setDepth(26);
+      container.add(p3);
+    });
+  }
+  
+  private createBirdEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    const irisColors = [0xFF6600, 0xFFCC00, 0xCC0000, 0x0099FF]; // Bright colors
+    const irisColor = irisColors[Math.floor(Math.random() * irisColors.length)];
+    
+    positions.forEach(x => {
+      // Bright colored iris
+      const iris = this.scene.add.circle(x, eyeY, size, irisColor);
+      iris.setDepth(25);
+      container.add(iris);
+      
+      // Small dark pupil
+      const pupil = this.scene.add.circle(x, eyeY, size * 0.3, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+      
+      // Ring around pupil
+      const ring = this.scene.add.circle(x, eyeY, size * 0.5, 0x000000, 0);
+      ring.setStrokeStyle(1, 0x000000);
+      ring.setDepth(26);
+      container.add(ring);
+    });
+  }
+  
+  private createSpiderEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    // 8 eyes total - 2 large forward, 6 smaller around
+    const mainEyes = [
+      { x: -size * 0.6, y: eyeY, size: size * 0.8 },
+      { x: size * 0.6, y: eyeY, size: size * 0.8 }
+    ];
+    
+    const sideEyes = [
+      { x: -size * 1.8, y: eyeY - size * 0.5, size: size * 0.4 },
+      { x: size * 1.8, y: eyeY - size * 0.5, size: size * 0.4 },
+      { x: -size * 1.5, y: eyeY + size * 0.8, size: size * 0.35 },
+      { x: size * 1.5, y: eyeY + size * 0.8, size: size * 0.35 },
+      { x: -size * 0.3, y: eyeY + size * 1.2, size: size * 0.3 },
+      { x: size * 0.3, y: eyeY + size * 1.2, size: size * 0.3 }
+    ];
+    
+    // Draw all eyes as simple black circles
+    [...mainEyes, ...sideEyes].forEach(eye => {
+      const eyeCircle = this.scene.add.circle(eye.x, eye.y, eye.size, 0x000000);
+      eyeCircle.setDepth(25);
+      container.add(eyeCircle);
+      
+      // Small highlight
+      const highlight = this.scene.add.circle(
+        eye.x + eye.size * 0.3,
+        eye.y - eye.size * 0.3,
+        eye.size * 0.2,
+        0x666666
+      );
+      highlight.setDepth(26);
+      container.add(highlight);
+    });
+  }
+  
+  private createGeckoEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    
+    positions.forEach(x => {
+      // Large colored eye
+      const eye = this.scene.add.circle(x, eyeY, size, colorScheme.lightColor);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // Vertical slit
+      const pupil = this.scene.add.rectangle(x, eyeY, size * 0.15, size * 1.5, 0x000000);
+      pupil.setDepth(26);
+      container.add(pupil);
+      
+      // Gold ring around pupil
+      const ring = this.scene.add.circle(x, eyeY, size * 0.5, 0xFFCC00, 0);
+      ring.setStrokeStyle(1, 0xFFCC00);
+      ring.setDepth(26);
+      container.add(ring);
+    });
+  }
+  
+  private createSnakeEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    const snakeColors = [0x996600, 0x669900, 0xCC9900]; // Brown, green, amber
+    const eyeColor = snakeColors[Math.floor(Math.random() * snakeColors.length)];
+    
+    positions.forEach(x => {
+      // Solid colored eye (pupil not easily visible)
+      const eye = this.scene.add.circle(x, eyeY, size, eyeColor);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // Subtle darker center
+      const center = this.scene.add.circle(x, eyeY, size * 0.5, 0x000000, 0.3);
+      center.setDepth(26);
+      container.add(center);
+      
+      // Glassy shine
+      const shine = this.scene.add.circle(x + size * 0.4, eyeY - size * 0.4, size * 0.25, 0xFFFFFF, 0.6);
+      shine.setDepth(27);
+      container.add(shine);
+    });
+  }
+  
+  private createAlienEyes(container: Phaser.GameObjects.Container, eyeY: number, size: number, colorScheme: any): void {
+    const positions = [-size, size];
+    const glowColors = [0x00FF00, 0x00FFFF, 0xFF00FF, 0xFFFF00]; // Bright alien colors
+    const glowColor = glowColors[Math.floor(Math.random() * glowColors.length)];
+    
+    positions.forEach(x => {
+      // Large glowing eye
+      const eye = this.scene.add.circle(x, eyeY, size, glowColor);
+      eye.setDepth(25);
+      container.add(eye);
+      
+      // Bright center (no pupil)
+      const glow = this.scene.add.circle(x, eyeY, size * 0.6, 0xFFFFFF, 0.8);
+      glow.setDepth(26);
+      container.add(glow);
+      
+      // Outer glow effect
+      const outerGlow = this.scene.add.circle(x, eyeY, size * 1.3, glowColor, 0.3);
+      outerGlow.setDepth(24);
+      container.add(outerGlow);
+    });
+  }
+  
+  private getPartVariation(appearance: any, partName: string): number {
+    const hash = (appearance.primaryColor.charCodeAt(0) * 31 + 
+                  appearance.secondaryColor.charCodeAt(1) * 37 + 
+                  partName.charCodeAt(0) * 41) % 100;
+    return hash / 100.0;
+  }
+  
+  private generateColorScheme(appearance: any): any {
+    const primaryColor = parseInt(appearance.primaryColor?.replace('#', '0x') || '0xFF0000');
+    const secondaryColor = parseInt(appearance.secondaryColor?.replace('#', '0x') || '0x00FF00');
+    const tertiaryColor = parseInt(appearance.tertiaryColor?.replace('#', '0x') || '0x0000FF');
+    const patternColor = parseInt(appearance.patternColor?.replace('#', '0x') || '0xFFFF00');
+    
+    return {
+      baseColor: primaryColor,
+      darkColor: secondaryColor,
+      lightColor: tertiaryColor,
+      accentColor: patternColor
+    };
+  }
+  
+  /**
+   * Blend two colors together (0.0 = all color1, 1.0 = all color2)
+   */
+  private blendColors(color1: number, color2: number, ratio: number): number {
+    const r1 = (color1 >> 16) & 0xFF;
+    const g1 = (color1 >> 8) & 0xFF;
+    const b1 = color1 & 0xFF;
+    
+    const r2 = (color2 >> 16) & 0xFF;
+    const g2 = (color2 >> 8) & 0xFF;
+    const b2 = color2 & 0xFF;
+    
+    const r = Math.floor(r1 * (1 - ratio) + r2 * ratio);
+    const g = Math.floor(g1 * (1 - ratio) + g2 * ratio);
+    const b = Math.floor(b1 * (1 - ratio) + b2 * ratio);
+    
+    return (r << 16) | (g << 8) | b;
   }
 }

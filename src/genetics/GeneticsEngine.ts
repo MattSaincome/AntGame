@@ -127,13 +127,12 @@ export class GeneticsEngine {
    * Calculate PROCEDURAL appearance from genetics - Spore-like system
    */
   static calculateAppearance(genetics: MonsterGenetics): MonsterAppearance {
-    // Use GENETIC values to determine head type (not random!)
-    const headIndex = Math.floor((genetics.headGene.value / 255) * 3);
-    const headType = `head_${headIndex}`;
+    // Use GENETIC values to determine head type - full range for 91 monsters!
+    // Instead of limiting to 0-2, use the full genetic value
+    const headType = `head_${genetics.headGene.value}`;
     
-    // Use GENETIC values to determine body type (not random!)
-    const bodyIndex = Math.floor((genetics.bodyGene.value / 255) * 3);
-    const bodyType = `body_${bodyIndex}`;
+    // Use GENETIC values to determine body type - full range for variety!
+    const bodyType = `body_${genetics.bodyGene.value}`;
     
     // Use GENETIC values for limb count (2-6)
     const limbCount = 2 + Math.floor((genetics.limbGene.value / 255) * 4);
@@ -333,6 +332,7 @@ export class GeneticsEngine {
       const genetics = this.createRandomGenetics(MonsterType.BASIC, 0);
       
       // Randomize ALL visual genes for true procedural generation
+      // Ensure each monster gets very different values for variety
       genetics.headGene.value = Math.floor(Math.random() * 255);
       genetics.bodyGene.value = Math.floor(Math.random() * 255);
       genetics.limbGene.value = Math.floor(Math.random() * 255);
@@ -341,6 +341,12 @@ export class GeneticsEngine {
       genetics.colorGene3.value = Math.floor(Math.random() * 255);
       genetics.mutationGene.value = Math.floor(Math.random() * 255);
       genetics.size.value = 50 + Math.floor(Math.random() * 155); // Size 50-205
+      
+      // Force unique appearance for initial monsters
+      genetics.uniqueId = `monster_${i + 1}_${Date.now()}_${Math.random()}`;
+      
+      // Make initial monsters adults for better visibility
+      genetics.age = genetics.maturityAge; // Start as adults!
       
       console.log(`Created UNIQUE PROCEDURAL monster ${genetics.uniqueId}: ALL parts random!`);
       family.push(genetics);

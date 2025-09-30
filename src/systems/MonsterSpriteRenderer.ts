@@ -91,23 +91,230 @@ export class MonsterSpriteRenderer {
   }
   
   /**
-   * Create PROCEDURAL body sprite - random mix of parts!
+   * Create body sprite - try to use loaded sprites first, then fallback to procedural
    */
   private createBodySprite(appearance: MonsterAppearance): Phaser.GameObjects.Sprite | null {
-    // Always use procedural generation with random variations
+    // First try spine images - HUNDREDS of variations!
+    const spineBodyKeys = this.getAllSpineKeys('body');
+    if (spineBodyKeys.length > 0) {
+      const bodyIndex = Math.abs(this.hashCode(appearance.bodyType)) % spineBodyKeys.length;
+      const bodyKey = spineBodyKeys[bodyIndex];
+      
+      if (this.scene.textures.exists(bodyKey)) {
+        console.log(`✅ Using SPINE body: ${bodyKey}`);
+        return this.scene.add.sprite(0, 0, bodyKey);
+      }
+    }
+    
+    // Fallback to original loaded sprite images
+    const possibleBodies = [
+      'enemy_monster1_body',
+      'enemy_monster2_body',
+      'enemy_monster3_body', 
+      'enemy_monster4_body',
+      'enemy_monster5_body',
+      'monster05_body',
+      'monster06_body',
+      'skeleton_crusader1_body',
+      'skeleton_crusader2_body',
+      'skeleton_crusader3_body',
+      'v1_m1_body',
+      'v1_m2_body',
+      'v1_m3_body',
+      'v1_m4_body',
+      'v1_m5_body',
+      'v2_m1_body',
+      'v2_m2_body',
+      'v2_m3_body',
+      'v2_m4_body',
+      'v2_m5_body',
+      'v3_m1_body',
+      'v3_m2_body',
+      'v3_m3_body',
+      'v3_m4_body',
+      'v3_m5_body',
+      'v4_m1_body',
+      'v4_m2_body',
+      'v4_m3_body',
+      'v4_m4_body',
+      'v4_m5_body',
+      'morev1_m1_body',
+      'morev1_m2_body',
+      'morev1_m3_body',
+      'morev1_m4_body',
+      'morev1_m5_body',
+      'morev2_m1_body',
+      'morev2_m2_body',
+      'morev2_m3_body',
+      'morev2_m4_body',
+      'morev2_m5_body',
+      'morev3_m1_body',
+      'morev3_m2_body',
+      'morev3_m3_body',
+      'morev3_m4_body',
+      'morev3_m5_body'
+    ];
+    
+    // Check for body sprites based on genetics
+    const bodyIndex = Math.abs(this.hashCode(appearance.bodyType)) % possibleBodies.length;
+    const bodyKey = possibleBodies[bodyIndex];
+    
+    if (this.scene.textures.exists(bodyKey)) {
+      console.log(`✅ Using sprite body: ${bodyKey}`);
+      return this.scene.add.sprite(0, 0, bodyKey);
+    } else {
+      console.log(`❌ Body sprite not found: ${bodyKey}`);
+      // Log first 10 available body textures for debugging
+      const availableKeys = Object.keys(this.scene.textures.list);
+      const bodyTextures = availableKeys.filter(k => k.includes('body')).slice(0, 10);
+      console.log('Available body textures:', bodyTextures);
+    }
+    
+    // Try generic body sprites with monster type in name
+    const monsterNum = appearance.bodyType.replace(/\D/g, '');
+    const variations = [
+      `v1_m${monsterNum}_body`,
+      `v2_m${monsterNum}_body`, 
+      `v3_m${monsterNum}_body`,
+      `v4_m${monsterNum}_body`,
+      `morev2_m${monsterNum}_body`
+    ];
+    
+    for (const variant of variations) {
+      if (this.scene.textures.exists(variant)) {
+        console.log(`Using sprite body variant: ${variant}`);
+        return this.scene.add.sprite(0, 0, variant);
+      }
+    }
+    
+    // Fallback to procedural generation
+    console.log(`No sprite found for body ${appearance.bodyType}, using procedural`);
     return this.createProceduralBody(appearance);
   }
   
+  private hashCode(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash;
+  }
+  
   /**
-   * Create PROCEDURAL head sprite - random genetics!
+   * Get all available spine keys for a specific body part type
+   */
+  private getAllSpineKeys(partType: string): string[] {
+    const keys: string[] = [];
+    const allTextures = Object.keys(this.scene.textures.list);
+    
+    // Find all spine images that match the part type
+    const searchPattern = `spine_.*_${partType}`;
+    allTextures.forEach(key => {
+      if (key.startsWith('spine_') && key.includes(`_${partType}`)) {
+        keys.push(key);
+      }
+    });
+    
+    return keys;
+  }
+  
+  /**
+   * Create head sprite - try to use loaded sprites first, then fallback to procedural
    */
   private createHeadSprite(appearance: MonsterAppearance): Phaser.GameObjects.Sprite | null {
-    // Always use procedural generation with random variations
+    // First try spine head images
+    const spineHeadKeys = this.getAllSpineKeys('head');
+    const spineEyeKeys = this.getAllSpineKeys('eye');
+    const allSpineHeads = [...spineHeadKeys, ...spineEyeKeys];
+    
+    if (allSpineHeads.length > 0) {
+      const headIndex = Math.abs(this.hashCode(appearance.headType)) % allSpineHeads.length;
+      const headKey = allSpineHeads[headIndex];
+      
+      if (this.scene.textures.exists(headKey)) {
+        console.log(`✅ Using SPINE head: ${headKey}`);
+        return this.scene.add.sprite(0, 0, headKey);
+      }
+    }
+    
+    // Fallback to original sprite images
+    const possibleHeads = [
+      'enemy_monster1_head',
+      'enemy_monster2_head',
+      'enemy_monster3_head',
+      'enemy_monster4_head',
+      'enemy_monster5_head',
+      'monster04_head',
+      'monster05_head',
+      'monster06_head',
+      'skeleton_crusader1_head',
+      'skeleton_crusader2_head',
+      'skeleton_crusader3_head',
+      'skull_knight_head',
+      'anubis_head',
+      'pumpkin_head_head',
+      'vampire_head',
+      'v1_m1_head',
+      'v1_m2_head',
+      'v1_m3_head',
+      'v1_m4_head',
+      'v1_m5_head',
+      'v2_m1_head',
+      'v2_m2_head',
+      'v2_m3_head',
+      'v2_m4_head',
+      'v2_m5_head'
+    ];
+    
+    // Check for head sprites based on genetics
+    const headIndex = Math.abs(this.hashCode(appearance.headType)) % possibleHeads.length;
+    const headKey = possibleHeads[headIndex];
+    
+    if (this.scene.textures.exists(headKey)) {
+      console.log(`Using sprite head: ${headKey}`);
+      return this.scene.add.sprite(0, 0, headKey);
+    }
+    
+    // Try monster-specific heads
+    const monsterNum = appearance.headType.replace(/\D/g, '');
+    const variations = [
+      `v1_m${monsterNum}_head`,
+      `v2_m${monsterNum}_head`,
+      `v3_m${monsterNum}_head`, 
+      `v4_m${monsterNum}_head`,
+      `morev2_m${monsterNum}_head`
+    ];
+    
+    for (const variant of variations) {
+      if (this.scene.textures.exists(variant)) {
+        console.log(`Using sprite head variant: ${variant}`);
+        return this.scene.add.sprite(0, 0, variant);
+      }
+    }
+    
+    // Try Eye sprites as alternative head parts
+    const eyeVariations = [
+      `enemy_monster1_eye`,
+      `v1_m${monsterNum}_eye`,
+      `morev2_m${monsterNum}_eye`
+    ];
+    
+    for (const eyeKey of eyeVariations) {
+      if (this.scene.textures.exists(eyeKey)) {
+        console.log(`Using eye sprite as head: ${eyeKey}`);
+        return this.scene.add.sprite(0, 0, eyeKey);
+      }
+    }
+    
+    // Fallback to procedural generation
+    console.log(`No sprite found for head ${appearance.headType}, using procedural`);
     return this.createProceduralHead(appearance);
   }
   
   /**
-   * Create PROCEDURAL limb sprites - random number and positioning!
+   * Create limb sprites - mix of actual sprites and procedural
    */
   private createLimbSprites(appearance: MonsterAppearance): Phaser.GameObjects.Sprite[] {
     const limbs: Phaser.GameObjects.Sprite[] = [];
@@ -115,17 +322,137 @@ export class MonsterSpriteRenderer {
     // RANDOM limb count from genetics (2-6 limbs)
     const limbCount = appearance.limbCount;
     
-    // Create limbs in random positions around body
+    // Get ALL spine limb parts - massive variety!
+    const spineLegKeys = this.getAllSpineKeys('leg');
+    const spineHandKeys = this.getAllSpineKeys('hand');
+    const spineClawKeys = this.getAllSpineKeys('claw');
+    const allSpineLimbs = [...spineLegKeys, ...spineHandKeys, ...spineClawKeys];
+    
+    // Available limb sprites - matching actual loaded keys
+    const possibleLimbs = [
+      'enemy_monster1_leg',
+      'v1_m1_leg_f', 'v1_m1_leg_b', 'v1_m1_hand_f', 'v1_m1_hand_b',
+      'v1_m2_leg_f', 'v1_m2_leg_b', 'v1_m2_hand_f', 'v1_m2_hand_b',
+      'v1_m3_leg_f', 'v1_m3_leg_b', 'v1_m3_hand_f', 'v1_m3_hand_b',
+      'v1_m4_leg_f', 'v1_m4_leg_b', 'v1_m4_hand_f', 'v1_m4_hand_b',
+      'v1_m5_leg_f', 'v1_m5_leg_b', 'v1_m5_hand_f', 'v1_m5_hand_b',
+      'v2_m1_leg_f', 'v2_m1_leg_b', 'v2_m1_hand_f', 'v2_m1_hand_b',
+      'v2_m2_leg_f', 'v2_m2_leg_b', 'v2_m2_hand_f', 'v2_m2_hand_b',
+      'v3_m1_leg_f', 'v3_m1_leg_b', 'v3_m1_hand_f', 'v3_m1_hand_b',
+      'v4_m1_leg_f', 'v4_m1_leg_b', 'v4_m1_hand_f', 'v4_m1_hand_b',
+      'morev1_m1_leg_f', 'morev1_m1_leg_b', 'morev1_m1_hand_f', 'morev1_m1_hand_b',
+      'morev2_m1_leg_f', 'morev2_m1_leg_b', 'morev2_m1_hand_f', 'morev2_m1_hand_b',
+      'morev2_m2_leg_f', 'morev2_m2_leg_b', 'morev2_m2_hand_f', 'morev2_m2_hand_b',
+      'monster05_left_hand', 'monster05_right_hand',
+      'monster05_left_leg', 'monster05_right_leg',
+      'monster06_left_hand', 'monster06_right_hand',
+      'monster06_left_leg', 'monster06_right_leg'
+    ];
+    
+    // Wings for special cases - including spine wings!
+    const spineWingKeys = this.getAllSpineKeys('wing');
+    const wingSprites = [
+      ...spineWingKeys,
+      'v1_m1_wing_f', 'v1_m1_wing_b',
+      'v1_m2_wing_f', 'v1_m2_wing_b',
+      'v1_m3_wing_f', 'v1_m3_wing_b',
+      'v2_m1_wing_f', 'v2_m1_wing_b',
+      'morev1_m1_wing_f', 'morev1_m1_wing_b',
+      'flying01_left_wing', 'flying01_right_wing'
+    ];
+    
+    // Check if monster should have wings based on genetics
+    const hasWings = appearance.mutations.includes('wings') || Math.random() < 0.2;
+    
+    // Create limbs in positions around body
     for (let i = 0; i < limbCount; i++) {
       const angle = (i / limbCount) * Math.PI * 2;
-      const distance = 8 + Math.random() * 4; // Random distance from center
+      const distance = 8 + Math.random() * 4;
       
-      const limb = this.createProceduralLimb(angle);
+      let limb: Phaser.GameObjects.Sprite | null = null;
+      
+      // First try spine limbs - HUGE variety!
+      if (allSpineLimbs.length > 0 && Math.random() < 0.7) { // 70% chance to use spine limbs
+        const limbIndex = Math.abs(this.hashCode(appearance.bodyType + i + 'spine')) % allSpineLimbs.length;
+        const limbKey = allSpineLimbs[limbIndex];
+        
+        if (this.scene.textures.exists(limbKey)) {
+          limb = this.scene.add.sprite(0, 0, limbKey);
+          console.log(`✅ Using SPINE limb: ${limbKey}`);
+        }
+      }
+      
+      // Try to use wings for upper limbs if applicable
+      if (!limb && hasWings && (i === 0 || i === 1) && i < wingSprites.length) {
+        const wingKey = wingSprites[i];
+        if (this.scene.textures.exists(wingKey)) {
+          limb = this.scene.add.sprite(0, 0, wingKey);
+          console.log(`Using wing sprite: ${wingKey}`);
+        }
+      }
+      
+      // Otherwise try regular limbs
+      if (!limb) {
+        const limbIndex = Math.abs(this.hashCode(appearance.bodyType + i)) % possibleLimbs.length;
+        const limbKey = possibleLimbs[limbIndex];
+        
+        if (this.scene.textures.exists(limbKey)) {
+          limb = this.scene.add.sprite(0, 0, limbKey);
+          console.log(`Using limb sprite: ${limbKey}`);
+        }
+      }
+      
+      // Fallback to procedural
+      if (!limb) {
+        limb = this.createProceduralLimb(angle);
+      }
+      
       if (limb) {
         limb.x = Math.cos(angle) * distance;
         limb.y = Math.sin(angle) * distance;
         limb.setRotation(angle);
+        limb.setScale(0.5 + Math.random() * 0.5); // Random size variation
         limbs.push(limb);
+      }
+    }
+    
+    // Add tail if in genetics - use spine tails!
+    if (appearance.mutations.includes('tail') || Math.random() < 0.3) {
+      const spineTailKeys = this.getAllSpineKeys('tail');
+      const spineTailsKeys = this.getAllSpineKeys('tails');
+      const allTails = [...spineTailKeys, ...spineTailsKeys, 'enemy_monster1_tails'];
+      
+      if (allTails.length > 0) {
+        const tailIndex = Math.abs(this.hashCode(appearance.bodyType + 'tail')) % allTails.length;
+        const tailKey = allTails[tailIndex];
+        
+        if (this.scene.textures.exists(tailKey)) {
+          const tail = this.scene.add.sprite(0, 12, tailKey);
+          tail.setScale(0.5 + Math.random() * 0.5);
+          limbs.push(tail);
+          console.log(`✅ Added tail sprite: ${tailKey}`);
+        }
+      }
+    }
+    
+    // Add random special parts from spine collection
+    if (Math.random() < 0.3) { // 30% chance for special parts
+      const specialParts = ['mouth', 'hat', 'neck', 'tongue', 'antenna', 'fin', 'claw', 'hair'];
+      const chosenPart = specialParts[Math.floor(Math.random() * specialParts.length)];
+      const specialKeys = this.getAllSpineKeys(chosenPart);
+      
+      if (specialKeys.length > 0) {
+        const specialKey = specialKeys[Math.floor(Math.random() * specialKeys.length)];
+        if (this.scene.textures.exists(specialKey)) {
+          const special = this.scene.add.sprite(
+            Math.random() * 20 - 10, // Random X position
+            Math.random() * 20 - 10, // Random Y position
+            specialKey
+          );
+          special.setScale(0.4 + Math.random() * 0.4);
+          limbs.push(special);
+          console.log(`✅ Added special part: ${specialKey}`);
+        }
       }
     }
     
@@ -232,8 +559,8 @@ export class MonsterSpriteRenderer {
           case 1: // Head
             sprite.setTint(Phaser.Display.Color.HexStringToColor(appearance.secondaryColor).color);
             break;
-          default: // Limbs and mutations
-            sprite.setTint(Phaser.Display.Color.HexStringToColor(appearance.patternColor).color);
+          default: // Limbs and mutations - use tertiary color
+            sprite.setTint(Phaser.Display.Color.HexStringToColor(appearance.tertiaryColor).color);
             break;
         }
       }

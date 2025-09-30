@@ -78,8 +78,8 @@ export class TerrariaTileRenderer {
    * Preload all tile sprites
    */
   preloadTiles(): void {
-    // Load individual tile sprites
-    for (let i = 1; i <= 65; i++) {
+    // Load individual tile sprites (only 64 exist, not 65)
+    for (let i = 1; i <= 64; i++) {
       const tileName = `Tile_${i.toString().padStart(2, '0')}`;
       this.scene.load.image(tileName, `tiles/swamp-cave/${tileName}.png`);
     }

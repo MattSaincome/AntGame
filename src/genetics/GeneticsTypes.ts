@@ -82,6 +82,7 @@ export interface MonsterAppearance {
   primaryColor: string;
   secondaryColor: string;
   tertiaryColor: string;
+  patternColor?: string; // Optional pattern overlay color
   scale: number;
   mutations: string[];
   movementType?: MovementType; // Procedural movement style
