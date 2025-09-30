@@ -140,10 +140,17 @@ export class GeneticsEngine {
     // Use GENETIC values for scale variations
     const scale = 0.5 + (genetics.size.value / 255) * 1.0;
     
-    // Calculate colors from color genes
+    // Calculate colors from color genes with COLOR HARMONY
+    // Primary color is the base (fully genetic)
     const primaryColor = this.geneToHexColor(genetics.colorGene1);
-    const secondaryColor = this.geneToHexColor(genetics.colorGene2);
-    const tertiaryColor = this.geneToHexColor(genetics.colorGene3);
+    const baseHue = (genetics.colorGene1.value / 255) * 360;
+    
+    // Secondary color uses analogous harmony (close on color wheel)
+    const secondaryColor = this.geneToHexColor(genetics.colorGene2, baseHue, 'analogous');
+    
+    // Tertiary color uses triadic or complementary harmony (accent color)
+    const useComplementary = genetics.colorGene3.value > 127;
+    const tertiaryColor = this.geneToHexColor(genetics.colorGene3, baseHue, useComplementary ? 'complementary' : 'triadic');
     
     // Determine mutations
     const mutations: string[] = [];
@@ -178,12 +185,37 @@ export class GeneticsEngine {
   }
   
   /**
-   * Convert a gene to a hex color
+   * Convert a gene to a hex color with color harmony
+   * Uses color theory to create pleasing color schemes
    */
-  private static geneToHexColor(gene: MonsterGene): string {
-    const hue = (gene.value / 255) * 360;
-    const saturation = 70 + (gene.dominance * 30); // 70-100%
-    const lightness = 40 + (gene.mutation * 40); // 40-80%
+  private static geneToHexColor(gene: MonsterGene, baseHue?: number, harmonyType?: 'analogous' | 'complementary' | 'triadic'): string {
+    let hue: number;
+    
+    if (baseHue !== undefined && harmonyType) {
+      // Create harmonious colors based on color theory
+      switch (harmonyType) {
+        case 'analogous':
+          // Colors adjacent on color wheel (±30 degrees)
+          hue = (baseHue + ((gene.value / 255) * 60 - 30) + 360) % 360;
+          break;
+        case 'complementary':
+          // Opposite on color wheel (180 degrees)
+          hue = (baseHue + 180 + ((gene.value / 255) * 40 - 20) + 360) % 360;
+          break;
+        case 'triadic':
+          // 120 degrees apart on color wheel
+          hue = (baseHue + 120 + ((gene.value / 255) * 30 - 15) + 360) % 360;
+          break;
+        default:
+          hue = (gene.value / 255) * 360;
+      }
+    } else {
+      hue = (gene.value / 255) * 360;
+    }
+    
+    // Ensure good saturation and lightness for visibility
+    const saturation = 65 + (gene.dominance * 25); // 65-90% (vibrant but not oversaturated)
+    const lightness = 45 + (gene.mutation * 25); // 45-70% (visible, not too dark or light)
     
     return this.hslToHex(hue, saturation, lightness);
   }
