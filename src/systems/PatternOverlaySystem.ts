@@ -134,28 +134,18 @@ export class PatternOverlaySystem {
   }
   
   /**
-   * Scales pattern (fish/reptilian) - overlapping semicircles
+   * Scales pattern - OPTIMIZED simple circles
    */
   private drawScales(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
-    const scaleSize = Math.max(3, Math.min(width, height) / 25); // Smaller scales
-    const rows = Math.ceil(height / (scaleSize * 0.7)) + 1;
-    const cols = Math.ceil(width / scaleSize) + 1;
+    graphics.fillStyle(color, 0.4);
+    const scaleSize = Math.max(5, Math.min(width, height) / 12);
+    const maxScales = 12; // Limit total scales
+    let count = 0;
     
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const x = col * scaleSize + (row % 2 === 0 ? 0 : scaleSize / 2);
-        const y = row * scaleSize * 0.7; // Overlap rows
-        
-        // Draw scale as filled arc (semicircle)
-        graphics.fillStyle(color, 0.3);
-        graphics.slice(x, y, scaleSize * 0.5, Math.PI, 0, false);
-        graphics.fillPath();
-        
-        // Outline for definition
-        graphics.lineStyle(0.5, color, 0.6);
-        graphics.beginPath();
-        graphics.arc(x, y, scaleSize * 0.5, Math.PI, 0, false);
-        graphics.strokePath();
+    for (let y = scaleSize; y < height && count < maxScales; y += scaleSize * 1.5) {
+      for (let x = scaleSize; x < width && count < maxScales; x += scaleSize * 1.5) {
+        graphics.fillCircle(x, y, scaleSize * 0.4);
+        count++;
       }
     }
   }
@@ -223,54 +213,32 @@ export class PatternOverlaySystem {
   }
   
   /**
-   * Leopard spots (rosettes)
+   * Leopard spots (rosettes) - OPTIMIZED
    */
   private drawLeopardSpots(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
-    graphics.lineStyle(1, color, 0.8); // Thinner line
-    const spotSize = Math.max(3, Math.min(width, height) / 20); // Much smaller spots
-    const spots = Math.floor((width * height) / (spotSize * spotSize * 4)); // More spots
+    graphics.fillStyle(color, 0.6);
+    const spotSize = Math.max(4, Math.min(width, height) / 15);
+    const spots = Math.min(8, Math.floor((width * height) / (spotSize * spotSize * 15))); // MAX 8 spots
     
     for (let i = 0; i < spots; i++) {
-      // Better distribution with some randomness
-      const x = (Math.random() * 0.9 + 0.05) * width; // Keep away from edges
-      const y = (Math.random() * 0.9 + 0.05) * height;
-      const radius = spotSize * (0.6 + Math.random() * 0.5); // Smaller variation
-      // Rosette: circle with small spots inside
-      graphics.strokeCircle(x, y, radius);
-      graphics.fillStyle(color, 0.9);
-      graphics.fillCircle(x - radius * 0.4, y - radius * 0.2, radius * 0.15);
-      graphics.fillCircle(x + radius * 0.4, y - radius * 0.2, radius * 0.15);
-      graphics.fillCircle(x, y + radius * 0.3, radius * 0.15);
+      const x = (Math.random() * 0.8 + 0.1) * width;
+      const y = (Math.random() * 0.8 + 0.1) * height;
+      const radius = spotSize * (0.7 + Math.random() * 0.3);
+      graphics.fillCircle(x, y, radius); // Just one circle per spot
     }
   }
   
   /**
-   * Tiger stripes (curved, irregular)
+   * Tiger stripes (curved, irregular) - OPTIMIZED
    */
   private drawTigerStripes(graphics: Phaser.GameObjects.Graphics, width: number, height: number, color: number): void {
-    graphics.fillStyle(color, 1);
-    const stripeCount = 8 + Math.floor(Math.random() * 4);
+    graphics.fillStyle(color, 0.7);
+    const stripeCount = 4; // Fixed 4 stripes
+    const stripeWidth = 3;
     
     for (let i = 0; i < stripeCount; i++) {
-      const y = (height / stripeCount) * i + Math.random() * (height / stripeCount);
-      const stripeWidth = 3 + Math.random() * 4;
-      
-      // Curved stripe using multiple segments
-      const segments = 8;
-      for (let s = 0; s < segments; s++) {
-        const x1 = (width / segments) * s;
-        const x2 = (width / segments) * (s + 1);
-        const y1 = y + Math.sin(s * 0.5) * 5;
-        const y2 = y + Math.sin((s + 1) * 0.5) * 5;
-        
-        const polygon = [
-          x1, y1,
-          x2, y2,
-          x2, y2 + stripeWidth,
-          x1, y1 + stripeWidth
-        ];
-        graphics.fillPoints(polygon, true);
-      }
+      const y = (height / stripeCount) * i + (height / stripeCount) * 0.5;
+      graphics.fillRect(0, y, width, stripeWidth); // Simple rectangles
     }
   }
   
