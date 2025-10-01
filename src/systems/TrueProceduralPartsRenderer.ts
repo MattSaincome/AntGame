@@ -2,6 +2,7 @@ import { Scene } from 'phaser';
 import { MonsterAppearance, MonsterLifeStage, PatternType } from '../genetics/GeneticsTypes';
 import { MovementType, MovementTypeDetector } from './MovementTypeDetector';
 import { PatternOverlaySystem } from './PatternOverlaySystem';
+import { DynamicPartLoader } from '../loaders/DynamicPartLoader';
 
 /**
  * TRUE Spore-like Procedural parts Renderer
@@ -220,12 +221,9 @@ export class TrueProceduralPartsRenderer {
       return { valid: false, reason: 'Missing body' };
     }
 
-    // Check facial features - must have EITHER a complete face OR separate eyes
-    const hasFace = parts.face !== null;
-    const hasEyes = parts.eyes !== null;
-    if (!hasFace && !hasEyes) {
-      return { valid: false, reason: 'Missing facial features (no face or eyes)' };
-    }
+    // Facial features are OPTIONAL - some heads are complete on their own
+    // (e.g. vampire, skeleton heads have faces built-in)
+    // No validation needed for eyes/mouth
 
     // Check locomotion - winged creatures need wings, non-winged need legs
     if (hasWings) {
@@ -245,26 +243,8 @@ export class TrueProceduralPartsRenderer {
       }
     }
 
-    // 3. CHECK FACIAL FEATURE SPACING (no overlap)
-    if (hasEyes && parts.mouth) {
-      const eyeBounds = parts.eyes.getBounds();
-      const mouthBounds = parts.mouth.getBounds();
-      
-      // Check if mouth overlaps with eyes
-      const overlap = Phaser.Geom.Rectangle.Overlaps(
-        new Phaser.Geom.Rectangle(eyeBounds.x, eyeBounds.y, eyeBounds.width, eyeBounds.height),
-        new Phaser.Geom.Rectangle(mouthBounds.x, mouthBounds.y, mouthBounds.width, mouthBounds.height)
-      );
-      
-      if (overlap) {
-        return { valid: false, reason: 'Eyes and mouth overlap' };
-      }
-      
-      // Also check if mouth is above eyes (incorrect positioning)
-      if (mouthBounds.centerY < eyeBounds.centerY) {
-        return { valid: false, reason: 'Mouth positioned above eyes' };
-      }
-    }
+    // 3. MINIMAL FACIAL FEATURE CHECK (allow overlap - it's part of the chaos!)
+    // No strict validation - let the random generation create weird monsters!
 
     // All checks passed!
     return { valid: true };
@@ -307,6 +287,7 @@ export class TrueProceduralPartsRenderer {
         bodySprite = this.scene.add.sprite(0, 0, bodyKey);
         this.applyPartTint(bodySprite, appearance.primaryColor);
         bodySprite.setName('body');
+        bodySprite.setDepth(0); // Base depth
         container.add(bodySprite);
       } else {
         // FALLBACK: Create a basic body shape if sprite fails
@@ -321,6 +302,7 @@ export class TrueProceduralPartsRenderer {
         bodySprite = this.scene.add.sprite(0, 0, 'fallback_body_' + Date.now());
         bodySprite.setTint(parseInt(appearance.primaryColor.replace('#', '0x')));
         bodySprite.setName('body');
+        bodySprite.setDepth(0); // Base depth
         graphics.destroy();
         container.add(bodySprite);
         
@@ -369,6 +351,8 @@ export class TrueProceduralPartsRenderer {
         }
       }
       
+      headSprite.setDepth(10); // Behind facial features (eyes=25, mouth=25)
+      headSprite.setName('head');
       container.add(headSprite);
     } else {
       console.warn(`❌ Could not find ANY head texture after ${attempts} attempts! Skipping head.`);
@@ -386,6 +370,7 @@ export class TrueProceduralPartsRenderer {
           appearance.patternIntensity
         );
         if (bodyPattern) {
+          bodyPattern.setDepth(5); // Above body but below head
           container.add(bodyPattern);
           (container as any).bodyPattern = bodyPattern; // Store for cleanup
           console.log(`🎨 Applied ${appearance.patternType} pattern to body (intensity: ${(appearance.patternIntensity * 100).toFixed(0)}%)`);
@@ -401,6 +386,7 @@ export class TrueProceduralPartsRenderer {
           appearance.patternIntensity * 0.8 // Slightly less intense on head
         );
         if (headPattern) {
+          headPattern.setDepth(15); // Above head (10) but below facial features (25)
           container.add(headPattern);
           (container as any).headPattern = headPattern; // Store for cleanup
         }
@@ -536,6 +522,23 @@ export class TrueProceduralPartsRenderer {
       }
     }
     
+    // FALLBACK: If no matching eye found, use ANY available eye texture!
+    if (!eyeTextureKey) {
+      const fallbackEyes = [
+        'v1_monster1_eye', 'v2_monster1_eye', 'v3_monster1_eye',
+        'morev2_m1_eye', 'morev2_m2_eye', 'morev2_m3_eye',
+        'enemy_monster1_Eye', 'flying01_eye'
+      ];
+      
+      for (const fallback of fallbackEyes) {
+        if (this.scene.textures.exists(fallback)) {
+          eyeTextureKey = fallback;
+          console.log(`⚠️ Using fallback eye texture: ${fallback} for ${selectedHead}`);
+          break;
+        }
+      }
+    }
+    
     // If we found an eye texture, create MULTIPLE EYES with VARIETY
     let eyeSprite: Phaser.GameObjects.Sprite | null = null;
     if (eyeTextureKey) {
@@ -565,21 +568,22 @@ export class TrueProceduralPartsRenderer {
       
       // DYNAMIC EYE SIZING based on head size and eye count
       const headWidth = headSprite ? headSprite.displayWidth : 100;
-      let eyeScale = 0.6; // Base scale
       
-      // Smaller eyes for more eyes
-      if (eyeCount === 3) eyeScale = 0.5;
-      else if (eyeCount === 4) eyeScale = 0.4;
-      else if (eyeCount >= 5) eyeScale = 0.35;
-      
-      // Scale eyes relative to head size (eyes should be ~10% of head width)
+      // Scale eyes relative to head size
       const singleEyeTexture = this.scene.textures.get(eyeTextureKey);
       const eyeTextureWidth = singleEyeTexture.getSourceImage().width;
-      const targetEyeWidth = headWidth * 0.10; // 10% of head width per eye (reduced from 15%)
-      eyeScale = targetEyeWidth / eyeTextureWidth;
       
-      // Clamp scale to reasonable bounds (reduced minimum from 0.2 to 0.1)
-      eyeScale = Math.max(0.1, Math.min(0.8, eyeScale));
+      // Adjust target size based on eye count
+      let targetWidthPercent = 0.08; // 8% of head width for 1-2 eyes
+      if (eyeCount === 3) targetWidthPercent = 0.07;
+      else if (eyeCount === 4) targetWidthPercent = 0.06;
+      else if (eyeCount >= 5) targetWidthPercent = 0.05;
+      
+      const targetEyeWidth = headWidth * targetWidthPercent;
+      let eyeScale = targetEyeWidth / eyeTextureWidth;
+      
+      // NO minimum size restriction - let eyes be naturally small!
+      eyeScale = Math.min(0.6, eyeScale); // Only cap maximum at 0.6
       
       console.log(`👁️ Creating ${eyeCount} eyes with scale ${eyeScale.toFixed(2)}`);
       
@@ -765,6 +769,7 @@ export class TrueProceduralPartsRenderer {
         bodySprite = this.scene.add.sprite(0, 0, 'fallback_flying_body_' + Date.now());
         bodySprite.setTint(parseInt(appearance.primaryColor.replace('#', '0x')));
         bodySprite.setName('body');
+        bodySprite.setDepth(0); // Base depth
         graphics.destroy();
         container.addAt(bodySprite, 0); // Add at bottom so head appears on top
       }
@@ -807,9 +812,15 @@ export class TrueProceduralPartsRenderer {
         container.addAt(rightWingSprite, bodyIndex);
       }
     } else {
-      // SIMPLIFIED - Skip limbs for now to diagnose visibility issue
-      const limbTypes = ['monster04', 'monster05', 'monster06'];
-      const selectedLimbType = limbTypes[Math.floor(Math.random() * limbTypes.length)];
+      // Get ALL available arms for maximum variety!
+      const allLeftArms = DynamicPartLoader.getAllArms().filter((arm: string) => arm.includes('left'));
+      const allRightArms = DynamicPartLoader.getAllArms().filter((arm: string) => arm.includes('right'));
+      
+      // Pick random arms (can be from different monsters for variety!)
+      const selectedLeftArm = allLeftArms.length > 0 ? 
+        allLeftArms[Math.floor(Math.random() * allLeftArms.length)] : null;
+      const selectedRightArm = allRightArms.length > 0 ? 
+        allRightArms[Math.floor(Math.random() * allRightArms.length)] : null;
       
       // Remove debug circle now that we know containers work
       
@@ -831,32 +842,38 @@ export class TrueProceduralPartsRenderer {
         hipY = bodyHeight * 0.4; // Legs attach at lower part of body
       }
       
+      // Calculate proportional limb scaling based on body size (AFTER getting body dimensions)
+      const limbScale = Math.min(1.0, bodyWidth / 100); // Scale limbs relative to body
+      const armLengthScale = 0.8 + (Math.random() * 0.4); // Random 0.8-1.2x variation
+      
       // ARM POSITIONING - Attached at exact body edges for seamless connection
       const leftArmX = -(bodyWidth * 0.5); // Left edge of body
       const rightArmX = (bodyWidth * 0.5); // Right edge of body
       const armHeight = shoulderY;
       
-      const leftArmKey = `${selectedLimbType}_left_upper_arm`;
-      if (this.scene.textures.exists(leftArmKey)) {
-        const leftArm = this.scene.add.sprite(leftArmX, armHeight, leftArmKey);
-        this.applyPartTint(leftArm, appearance.patternColor); // Pattern color for arms
-        leftArm.setDepth(-1);
+      // Use selected left arm (random variety!) with PROPORTIONAL sizing
+      if (selectedLeftArm && this.scene.textures.exists(selectedLeftArm)) {
+        const leftArm = this.scene.add.sprite(leftArmX, armHeight, selectedLeftArm);
+        this.applyPartTint(leftArm, appearance.primaryColor); // Same as body for natural look
+        leftArm.setDepth(-3); // Behind legs (-2), body (0), and facial features (25)
         leftArm.setName('leftArm');
         leftArm.setOrigin(1, 0.5); // Attach RIGHT edge of arm to LEFT edge of body
         leftArm.setAlpha(0.9);
-        leftArm.setScale(0.8);
+        // PROPORTIONAL SCALING - arms scale with body size
+        leftArm.setScale(limbScale * 0.6, limbScale * armLengthScale); // Width & length proportional
         container.add(leftArm);
       }
       
-      const rightArmKey = `${selectedLimbType}_right_upper_arm`;
-      if (this.scene.textures.exists(rightArmKey)) {
-        const rightArm = this.scene.add.sprite(rightArmX, armHeight, rightArmKey);
-        this.applyPartTint(rightArm, appearance.patternColor); // Pattern color for arms
-        rightArm.setDepth(-1);
+      // Use selected right arm (random variety!) with PROPORTIONAL sizing
+      if (selectedRightArm && this.scene.textures.exists(selectedRightArm)) {
+        const rightArm = this.scene.add.sprite(rightArmX, armHeight, selectedRightArm);
+        this.applyPartTint(rightArm, appearance.primaryColor); // Same as body for natural look
+        rightArm.setDepth(-3); // Behind legs (-2), body (0), and facial features (25)
         rightArm.setName('rightArm');
         rightArm.setOrigin(0, 0.5); // Attach LEFT edge of arm to RIGHT edge of body
         rightArm.setAlpha(0.9);
-        rightArm.setScale(0.8);
+        // PROPORTIONAL SCALING - arms scale with body size
+        rightArm.setScale(limbScale * 0.6, limbScale * armLengthScale); // Width & length proportional
         container.add(rightArm);
       }
       
@@ -876,28 +893,35 @@ export class TrueProceduralPartsRenderer {
       const rightLegX = (bodyWidth * 0.35); // Slightly inside right edge
       const legY = hipY; // Attach at hip position
       
-      const leftLegKey = `${selectedLimbType}_left_leg`;
-      if (this.scene.textures.exists(leftLegKey)) {
-        const leftLeg = this.scene.add.sprite(leftLegX, legY, leftLegKey);
-        this.applyPartTint(leftLeg, appearance.tertiaryColor); // Different color for legs
+      // Get ALL available legs for variety
+      const allLeftLegs = DynamicPartLoader.getAllLegs().filter((leg: string) => leg.includes('left'));
+      const allRightLegs = DynamicPartLoader.getAllLegs().filter((leg: string) => leg.includes('right'));
+      
+      const selectedLeftLeg = allLeftLegs.length > 0 ? 
+        allLeftLegs[Math.floor(Math.random() * allLeftLegs.length)] : null;
+      const selectedRightLeg = allRightLegs.length > 0 ? 
+        allRightLegs[Math.floor(Math.random() * allRightLegs.length)] : null;
+      
+      if (selectedLeftLeg && this.scene.textures.exists(selectedLeftLeg)) {
+        const leftLeg = this.scene.add.sprite(leftLegX, legY, selectedLeftLeg);
+        this.applyPartTint(leftLeg, appearance.primaryColor); // Same as body for natural look
         leftLeg.setDepth(-2); // Put legs behind body
         leftLeg.setName('leftLeg'); // Name for animation
         leftLeg.setOrigin(0.5, 0); // Anchor at top center of leg
-        // Slightly vary leg size genetically
-        const legScale = 0.9 + (Math.random() * 0.2);
+        // PROPORTIONAL leg scaling based on body
+        const legScale = limbScale * (0.7 + (Math.random() * 0.2)); // Proportional with variation
         leftLeg.setScale(legScale);
         container.add(leftLeg);
       }
       
-      const rightLegKey = `${selectedLimbType}_right_leg`;
-      if (this.scene.textures.exists(rightLegKey)) {
-        const rightLeg = this.scene.add.sprite(rightLegX, legY, rightLegKey);
-        this.applyPartTint(rightLeg, appearance.tertiaryColor); // Different color for legs
+      if (selectedRightLeg && this.scene.textures.exists(selectedRightLeg)) {
+        const rightLeg = this.scene.add.sprite(rightLegX, legY, selectedRightLeg);
+        this.applyPartTint(rightLeg, appearance.primaryColor); // Same as body for natural look
         rightLeg.setDepth(-2); // Put legs behind body
         rightLeg.setName('rightLeg'); // Name for animation
         rightLeg.setOrigin(0.5, 0); // Anchor at top center of leg
-        // Match leg scale for symmetry (with tiny variation)
-        const legScale = 0.9 + (Math.random() * 0.2);
+        // PROPORTIONAL leg scaling based on body
+        const legScale = limbScale * (0.7 + (Math.random() * 0.2)); // Proportional with variation
         rightLeg.setScale(legScale);
         container.add(rightLeg);
       }
@@ -909,7 +933,7 @@ export class TrueProceduralPartsRenderer {
     
     // Apply life stage scaling - 1.5-2 blocks tall (16px = 1 block)
     // Target: 24-32px tall monsters = 0.06-0.08 scale for ~400px sprites
-    let baseScale = 0.0735; // 5% bigger (was 0.07) for better visibility
+    let baseScale = 0.08085; // 10% bigger (was 0.0735) for better visibility
     let scale = baseScale;
     
     switch (lifeStage) {

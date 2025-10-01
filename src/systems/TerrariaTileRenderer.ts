@@ -5,7 +5,12 @@
  * Key concepts:
  * - Dugout/mined areas show simple gray background (no patterns)
  * - Solid blocks have edge sprites with light sides facing dugout voids
- * - Fog of war covers undiscovered areas
+ * - Progressive fog of war based on distance from dug-out areas:
+ *   - Layer 0 (dug out): Fully visible
+ *   - Layer 1 (adjacent): Clear view
+ *   - Layer 2: Somewhat obscured (30% dark overlay)
+ *   - Layer 3: More obscured (60% dark overlay)
+ *   - Layer 4+: Completely black
  * - Tiles dynamically update edges when neighbors are mined
  */
 
@@ -27,6 +32,7 @@ export class TerrariaTileRenderer {
   private tileSprites: Map<string, Phaser.GameObjects.Container> = new Map();
   private fogSprites: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private backgroundCreated: boolean = false;
+  private visibilityCache: Map<string, number> = new Map(); // Cache for distance calculations
   
   // Map edge configurations to specific tile sprites
   // These should be from the swamp-cave tileset with appropriate edges
@@ -121,6 +127,93 @@ export class TerrariaTileRenderer {
   }
 
   /**
+   * Calculate visibility layer based on distance from dug-out areas
+   * Returns 0 for dug out, 1-3 for progressive obscuring, 4+ for completely black
+   */
+  private calculateVisibilityLayer(tiles: any[][], x: number, y: number): number {
+    const cacheKey = `${x}_${y}`;
+    
+    // Check cache first
+    if (this.visibilityCache.has(cacheKey)) {
+      return this.visibilityCache.get(cacheKey)!;
+    }
+    
+    // If tile is dug out (air), it's fully visible
+    const tile = tiles[x]?.[y];
+    if (!tile) {
+      this.visibilityCache.set(cacheKey, 4);
+      return 4;
+    }
+    
+    const tileType = tile.type !== undefined ? tile.type : tile;
+    if (tileType === TileType.AIR || tileType === 'air' || tileType === 0) {
+      this.visibilityCache.set(cacheKey, 0);
+      return 0; // Fully visible
+    }
+    
+    // Use BFS to find distance to nearest dug-out tile
+    const distance = this.calculateDistanceToDugOut(tiles, x, y);
+    this.visibilityCache.set(cacheKey, distance);
+    return distance;
+  }
+
+  /**
+   * Calculate minimum distance to any dug-out (AIR) tile using BFS
+   * Optimized to only search up to distance 4
+   */
+  private calculateDistanceToDugOut(tiles: any[][], startX: number, startY: number): number {
+    const maxDistance = 4;
+    const visited = new Set<string>();
+    const queue: Array<{x: number, y: number, dist: number}> = [{x: startX, y: startY, dist: 0}];
+    
+    visited.add(`${startX}_${startY}`);
+    
+    while (queue.length > 0) {
+      const {x, y, dist} = queue.shift()!;
+      
+      // Check if we've reached max distance
+      if (dist >= maxDistance) {
+        return maxDistance;
+      }
+      
+      // Check all 4 adjacent tiles (no diagonals for more natural spreading)
+      const neighbors = [
+        {x: x, y: y - 1},  // top
+        {x: x + 1, y: y},  // right
+        {x: x, y: y + 1},  // bottom
+        {x: x - 1, y: y}   // left
+      ];
+      
+      for (const neighbor of neighbors) {
+        const {x: nx, y: ny} = neighbor;
+        const key = `${nx}_${ny}`;
+        
+        // Skip if out of bounds or already visited
+        if (nx < 0 || nx >= tiles.length || ny < 0 || ny >= tiles[0].length) continue;
+        if (visited.has(key)) continue;
+        
+        visited.add(key);
+        
+        const neighborTile = tiles[nx]?.[ny];
+        if (!neighborTile) continue;
+        
+        const neighborType = neighborTile.type !== undefined ? neighborTile.type : neighborTile;
+        
+        // If we found a dug-out tile, return the distance
+        if (neighborType === TileType.AIR || neighborType === 'air' || neighborType === 0) {
+          return dist + 1;
+        }
+        
+        // Continue searching from this tile
+        queue.push({x: nx, y: ny, dist: dist + 1});
+      }
+    }
+    
+    // No dug-out tile found within maxDistance
+    return maxDistance;
+  }
+
+  /**
    * Get the edge configuration for a tile
    */
   private getEdgeConfig(tiles: any[][], x: number, y: number): EdgeConfig {
@@ -180,17 +273,23 @@ export class TerrariaTileRenderer {
       this.tileSprites.delete(tileKey);
     }
 
-    // Handle undiscovered tiles (fog of war)
-    if (!tile.discovered) {
-      return this.renderFogOfWar(x, y, tileSize);
+    // Calculate visibility layer if world is provided
+    let visibilityLayer = 4; // Default to completely black
+    if (world) {
+      visibilityLayer = this.calculateVisibilityLayer(world, x, y);
     }
 
-    // Remove fog if it exists
+    // Handle completely obscured tiles (layer 4+) - but only if truly far from any dug area
+    if (visibilityLayer >= 4) {
+      return this.renderFogOfWar(x, y, tileSize, 4);
+    }
+
+    // Remove complete fog if it exists (tile is within visibility range)
     this.removeFog(x, y);
 
     // Handle empty/air tiles - just show background (no patterns!)
     if (tile.type === TileType.AIR || tile.type === 'air' || tile.type === 0) {
-      return null; // Background shows through
+      return null; // Background shows through, fully visible
     }
 
     // Create container for this tile
@@ -234,6 +333,14 @@ export class TerrariaTileRenderer {
       }
     }
 
+    // Apply progressive fog of war overlay based on visibility layer
+    if (visibilityLayer > 0) {
+      const fogOverlay = this.createFogOverlay(x, y, tileSize, visibilityLayer);
+      if (fogOverlay) {
+        container.add(fogOverlay);
+      }
+    }
+
     // Store reference
     this.tileSprites.set(tileKey, container);
     
@@ -241,9 +348,42 @@ export class TerrariaTileRenderer {
   }
 
   /**
-   * Render fog of war for undiscovered tiles
+   * Create a fog overlay for progressive visibility
+   * Layer 1: Clear (no overlay)
+   * Layer 2: 30% dark
+   * Layer 3: 60% dark
+   * Layer 4+: Completely black
    */
-  private renderFogOfWar(x: number, y: number, tileSize: number): null {
+  private createFogOverlay(x: number, y: number, tileSize: number, layer: number): Phaser.GameObjects.Rectangle | null {
+    if (layer <= 0) return null;
+    
+    let alpha = 0;
+    switch (layer) {
+      case 1:
+        alpha = 0; // Clear view
+        break;
+      case 2:
+        alpha = 0.3; // Somewhat obscured
+        break;
+      case 3:
+        alpha = 0.6; // More obscured
+        break;
+      default:
+        alpha = 1.0; // Completely black
+    }
+    
+    if (alpha === 0) return null;
+    
+    const overlay = this.scene.add.rectangle(0, 0, tileSize, tileSize, 0x000000);
+    overlay.setAlpha(alpha);
+    return overlay;
+  }
+
+  /**
+   * Render fog of war for undiscovered tiles
+   * Layer 4 = completely black
+   */
+  private renderFogOfWar(x: number, y: number, tileSize: number, layer: number = 4): null {
     const fogKey = `fog_${x}_${y}`;
     
     if (!this.fogSprites.has(fogKey)) {
@@ -255,6 +395,7 @@ export class TerrariaTileRenderer {
         0x000000  // Pure black
       );
       fog.setDepth(100); // Above everything else
+      fog.setAlpha(1.0); // Completely opaque for layer 4
       this.fogSprites.set(fogKey, fog);
     }
     
@@ -275,25 +416,36 @@ export class TerrariaTileRenderer {
 
   /**
    * Update adjacent tiles when a tile is mined/changed
-   * This ensures edge sprites update correctly
+   * This ensures edge sprites and fog of war update correctly
    */
   updateAdjacentTiles(x: number, y: number, world: any[][], tileSize: number): void {
-    // Update all 8 surrounding tiles
-    const neighbors = [
-      [x-1, y-1], [x, y-1], [x+1, y-1],
-      [x-1, y],             [x+1, y],
-      [x-1, y+1], [x, y+1], [x+1, y+1]
-    ];
-
-    for (const [nx, ny] of neighbors) {
-      if (nx >= 0 && nx < world.length && ny >= 0 && ny < world[0].length) {
-        const neighborTile = world[nx][ny];
-        if (neighborTile && neighborTile.discovered && neighborTile.type !== TileType.AIR) {
-          // Re-render this neighbor with updated edges
-          this.renderTile(nx, ny, neighborTile, tileSize, world);
+    // Clear visibility cache for affected area (larger radius for fog updates)
+    this.clearVisibilityCache();
+    
+    // Update tiles in a larger radius to ensure fog of war updates properly
+    const updateRadius = 5; // Update up to 5 tiles away for fog updates
+    
+    for (let dx = -updateRadius; dx <= updateRadius; dx++) {
+      for (let dy = -updateRadius; dy <= updateRadius; dy++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (nx >= 0 && nx < world.length && ny >= 0 && ny < world[0].length) {
+          const neighborTile = world[nx][ny];
+          if (neighborTile) {
+            // Re-render to update visibility layers
+            this.renderTile(nx, ny, neighborTile, tileSize, world);
+          }
         }
       }
     }
+  }
+
+  /**
+   * Clear the visibility cache to force recalculation
+   */
+  private clearVisibilityCache(): void {
+    this.visibilityCache.clear();
   }
 
   /**

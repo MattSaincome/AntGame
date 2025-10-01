@@ -114,4 +114,26 @@ export class DynamicPartLoader {
     
     return hands;
   }
+  
+  /**
+   * Get ALL arm textures from all monsters
+   */
+  static getAllArms(): string[] {
+    const arms: string[] = [];
+    const armPatterns = ['arm', 'upper_arm', 'limb'];
+    
+    for (const [monsterType, parts] of Object.entries(ACTUAL_MONSTER_PARTS)) {
+      for (const part of parts) {
+        const lowerPart = part.toLowerCase();
+        // Check if this part is an arm
+        if (armPatterns.some(pattern => lowerPart.includes(pattern)) && 
+            !lowerPart.includes('leg')) { // Exclude legs
+          const safeKey = this.getPartKey(monsterType, part);
+          arms.push(safeKey);
+        }
+      }
+    }
+    
+    return arms;
+  }
 }

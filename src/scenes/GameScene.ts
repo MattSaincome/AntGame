@@ -132,7 +132,7 @@ export class GameScene extends Phaser.Scene {
     
     // Camera setup (will follow hive after it's created)
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH * TILE_SIZE, WORLD_HEIGHT * TILE_SIZE);
-    this.cameras.main.setZoom(2);
+    this.cameras.main.setZoom(2.3); // Slightly zoomed in (was 2)
     
     // Add mouse wheel zoom controls
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, gameObjects: any[], deltaX: number, deltaY: number) => {
@@ -690,9 +690,23 @@ export class GameScene extends Phaser.Scene {
         if (monster.sprite instanceof Phaser.GameObjects.Container) {
           const container = monster.sprite as Phaser.GameObjects.Container;
           
+          // CRITICAL: Store original scale to prevent compounding
+          if (!(container as any).originalScale) {
+            (container as any).originalScale = Math.abs(container.scaleX);
+          }
+          const baseScale = (container as any).originalScale;
+          
+          // Flip sprite based on movement direction (use ORIGINAL scale only)
+          if (monster.position.vx < -5) {
+            container.setScale(-baseScale, baseScale);
+          } else if (monster.position.vx > 5) {
+            container.setScale(baseScale, baseScale);
+          }
+          
           const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
           const isClimbing = monster.isClimbing || false;
           const isMining = monster.state === MonsterState.MINING;
+          const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
           
           // Get ground Y position for foot placement
           const groundY = this.ragdollPhysics.getGroundY(
@@ -703,7 +717,34 @@ export class GameScene extends Phaser.Scene {
           );
           
           // Apply appropriate ragdoll physics based on state
-          if (isWalking) {
+          // ALWAYS animate wings for flying monsters!
+          const canFly = monster.sprite && (monster.sprite as any).movementType === 'fly';
+          if (canFly) {
+            this.ragdollPhysics.updateFlying(
+              monster.id,
+              monster.position.vx,
+              monster.position.vy,
+              deltaTime
+            );
+          }
+          
+          // PRIORITY: Carrying overrides other animations!
+          if (isCarrying && monster.carryingChunkId) {
+            // Arms STICK to the carried resource block - glue-like grip!
+            const carriedChunk = this.resourceChunkManager.chunks.get(monster.carryingChunkId);
+            if (carriedChunk) {
+              this.ragdollPhysics.updateCarrying(
+                monster.id,
+                container,
+                carriedChunk.x,
+                carriedChunk.y,
+                deltaTime,
+                monster.position.vx, // Pass velocity for leg animation
+                monster.position.vy,
+                monster.position.onGround // Pass ground state
+              );
+            }
+          } else if (isWalking && !canFly) {
             // Realistic walking with feet stepping
             this.ragdollPhysics.updateWalking(
               monster.id,
@@ -714,7 +755,7 @@ export class GameScene extends Phaser.Scene {
               deltaTime
             );
           } else if (isClimbing) {
-            // Hands reach and grab blocks
+            // Hands reach and grab blocks, legs walk if moving horizontally
             const targetBlock = this.findNearestClimbableBlock(monster);
             if (targetBlock) {
               this.ragdollPhysics.updateClimbing(
@@ -723,12 +764,13 @@ export class GameScene extends Phaser.Scene {
                 targetBlock.x * TILE_SIZE,
                 targetBlock.y * TILE_SIZE,
                 true,
-                deltaTime
+                deltaTime,
+                monster.position.vx // Pass velocity for leg walking
               );
             }
           } else if (isMining) {
-            // Hand swings at mining target
-            const swingProgress = (this.time.now % 1000) / 1000; // 1 second cycle
+            // METHODICAL LUNGE/BASH at mining target - slower, more violent
+            const swingProgress = (this.time.now % 1500) / 1500; // 1.5 second cycle - SLOWER for impact
             const targetX = monster.position.x + (monster.position.vx > 0 ? 30 : -30);
             const targetY = monster.position.y;
             this.ragdollPhysics.updateMining(
@@ -742,13 +784,6 @@ export class GameScene extends Phaser.Scene {
           } else {
             // Idle - return to rest position
             this.ragdollPhysics.resetToIdle(monster.id);
-          }
-          
-          // Flip container based on movement direction
-          if (monster.position.vx < -5) {
-            container.scaleX = -Math.abs(container.scaleX);
-          } else if (monster.position.vx > 5) {
-            container.scaleX = Math.abs(container.scaleX);
           }
         }
       }
@@ -1507,9 +1542,10 @@ export class GameScene extends Phaser.Scene {
     const canFly = monster.sprite && (monster.sprite as any).movementType === 'fly';
     const canHop = monster.sprite && (monster.sprite as any).movementType === 'hop';
     
-    // HEAVY LEMMINGS-STYLE GRAVITY (but flying creatures IGNORE gravity)
-    const gravity = canFly ? 0 : 1600; // NO gravity for flyers, heavy for walkers
-    const terminalVelocity = canFly ? 0 : 800; // Flyers don't fall, walkers fall FAST
+    // SMOOTH GRAVITY with air resistance for natural jumping
+    const gravity = canFly ? 0 : 1400; // Reduced gravity for smoother jumps (was 1600)
+    const terminalVelocity = canFly ? 0 : 700; // Reduced terminal velocity (was 800)
+    const airResistance = 0.98; // Air drag smooths vertical movement
     const groundFriction = 0.85; // Less friction - more sliding
     const wallCrawlSpeed = 0.05; // EXTREMELY slow wall-crawling (was 0.1)
     const wallCrawlEnergyDrain = 8.0 * deltaTime; // MASSIVE energy cost for wall climbing
@@ -1527,8 +1563,8 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Check for nearby walls to crawl on
-    const canWallCrawl = this.checkForWallCrawling(monster, currentTileX, currentTileY);
+    // Wall crawling disabled
+    const canWallCrawl = false;
     
     if (hasGroundSupport) {
       // WALKING/HOPPING ON SOLID GROUND
@@ -1536,51 +1572,56 @@ export class GameScene extends Phaser.Scene {
       monster.facingBackward = false;
       monster.position.onGround = true;
       
-      // Check if monster just face-planted from a fall - BRUTAL LEMMINGS IMPACT!
-      if ((monster as any).isFalling && (monster as any).fallHeight > 15) { // LOWER threshold - hurts easier!
-        // HARD STOP - complete momentum kill
-        monster.position.vx = 0;
-        monster.position.vy = 0;
-        (monster as any).isFalling = false;
+      // Check fall damage based on fall height (measured from FEET, 16px = 1 block)
+      if ((monster as any).isFalling && (monster as any).fallHeight > 0) {
+        const fallBlocks = (monster as any).fallHeight / TILE_SIZE; // Convert to blocks
         
-        // HEAVY DAMAGE from falls
-        const fallDamage = Math.min(80, (monster as any).fallHeight / 2); // MORE damage!
-        monster.energy -= fallDamage;
-        
-        // CHECK FOR DEATH
-        if (monster.energy <= 0) {
-          // MONSTER DIED FROM FALL!
-          console.log(`Monster ${monster.id} DIED from fall! Height: ${(monster as any).fallHeight}`);
+        // 1.5 BLOCKS OR LESS - No reaction (normal walking down)
+        if (fallBlocks <= 1.5) {
+          // Just landed normally - no special animation needed
+        }
+        // 2-3 BLOCKS - Soft landing (crouch recovery)
+        else if (fallBlocks < 3.5) {
+          // Soft landing - brief crouch
+          (monster as any).softLanding = true;
+          (monster as any).recoverTime = 0.5; // Half second pause
+          monster.position.vx *= 0.3; // Slow down significantly
+        }
+        // 3.5+ BLOCKS - Face plant (hard landing with damage)
+        else {
+          // HARD STOP - complete momentum kill
+          monster.position.vx = 0;
+          monster.position.vy = 0;
           
-          // Create blood splat effect
-          if (this.cameras?.main) {
-            this.cameras.main.shake(200, 0.02);
+          // DAMAGE from hard falls
+          const fallDamage = Math.min(80, (monster as any).fallHeight / 2);
+          monster.energy -= fallDamage;
+          
+          // CHECK FOR DEATH
+          if (monster.energy <= 0) {
+            // MONSTER DIED FROM FALL!
+            console.log(`Monster ${monster.id} DIED from fall! Height: ${fallBlocks.toFixed(1)} blocks`);
+            
+            // Turn monster into a corpse resource
+            this.createCorpseResource(monster);
+            
+            // Remove from active monsters
+            const index = this.monsters.indexOf(monster);
+            if (index > -1) {
+              this.monsters.splice(index, 1);
+            }
+            
+            // Destroy sprite
+            if (monster.sprite) {
+              monster.sprite.destroy();
+            }
+          } else {
+            // SURVIVED - face plant with recovery animation
+            (monster as any).facePlanted = true;
+            (monster as any).recoverTime = 0.75; // 0.75 seconds to recover
+            
+            console.log(`Monster ${monster.id} face-planted from ${fallBlocks.toFixed(1)} blocks! Damage: ${fallDamage.toFixed(1)}`);
           }
-          
-          // Turn monster into a corpse resource
-          this.createCorpseResource(monster);
-          
-          // Remove from active monsters
-          const index = this.monsters.indexOf(monster);
-          if (index > -1) {
-            this.monsters.splice(index, 1);
-          }
-          
-          // Destroy sprite
-          if (monster.sprite) {
-            monster.sprite.destroy();
-          }
-        } else {
-          // SURVIVED - face plant with FASTER recovery
-          (monster as any).facePlanted = true;
-          (monster as any).recoverTime = 1.0; // FASTER recovery - only 1 second
-          
-          // SCREEN SHAKE for big falls
-          if ((monster as any).fallHeight > 40 && this.cameras?.main) {
-            this.cameras.main.shake(150, 0.01 * ((monster as any).fallHeight / 40));
-          }
-          
-          console.log(`Monster ${monster.id} face-planted from height ${(monster as any).fallHeight}! Damage: ${fallDamage}`);
         }
       }
       
@@ -1589,15 +1630,79 @@ export class GameScene extends Phaser.Scene {
       (monster as any).fallHeight = 0;
       (monster as any).isFalling = false;
       
+      // Handle recovery from soft landing (crouch animation)
+      if ((monster as any).softLanding) {
+        (monster as any).recoverTime -= deltaTime;
+        if ((monster as any).recoverTime <= 0) {
+          (monster as any).softLanding = false; // Recovered!
+        } else {
+          // Crouch briefly - slow movement
+          monster.position.vx *= 0.5;
+          
+          // Crouch visual (body lower, legs bent)
+          if (monster.sprite) {
+            const crouchProgress = 1.0 - ((monster as any).recoverTime / 0.5);
+            const crouchOffset = Math.sin(crouchProgress * Math.PI) * -8; // Crouch down 8 pixels
+            monster.sprite.y = monster.position.y + crouchOffset;
+          }
+        }
+      }
+      
       // Handle recovery from face plant
       if ((monster as any).facePlanted) {
         (monster as any).recoverTime -= deltaTime;
         if ((monster as any).recoverTime <= 0) {
           (monster as any).facePlanted = false; // Recovered!
+          // Reset rotation and eyes
+          if (monster.sprite) {
+            monster.sprite.rotation = 0;
+            // Find and reopen eyes
+            const container = monster.sprite as Phaser.GameObjects.Container;
+            if (container.list) {
+              container.list.forEach((child: any) => {
+                if (child.name && child.name.includes('eye')) {
+                  child.setScale(child.scaleX, child.scaleX); // Restore Y scale
+                }
+              });
+            }
+          }
         } else {
-          // Still recovering - can't move
+          // Still recovering - can't move, lying horizontal
           monster.position.vx = 0;
           monster.position.vy = 0;
+          
+          // Face plant visual - ENTIRE CONTAINER rotates horizontal, eyes close
+          if (monster.sprite) {
+            const recoverProgress = 1.0 - ((monster as any).recoverTime / 0.75);
+            const container = monster.sprite as Phaser.GameObjects.Container;
+            
+            if (recoverProgress < 0.5) {
+              // First half - falling/laying flat, eyes CLOSED
+              container.rotation = Math.PI / 2; // 90 degrees (horizontal)
+              
+              // Close eyes (scale Y to 0)
+              if (container.list) {
+                container.list.forEach((child: any) => {
+                  if (child.name && child.name.includes('eye')) {
+                    child.setScale(child.scaleX, 0); // Close eyes!
+                  }
+                });
+              }
+            } else {
+              // Second half - getting back up, eyes OPENING
+              const standProgress = (recoverProgress - 0.5) * 2; // 0 to 1
+              container.rotation = (Math.PI / 2) * (1 - standProgress); // Rotate back to 0
+              
+              // Open eyes gradually
+              if (container.list) {
+                container.list.forEach((child: any) => {
+                  if (child.name && child.name.includes('eye')) {
+                    child.setScale(child.scaleX, child.scaleX * standProgress); // Eyes opening!
+                  }
+                });
+              }
+            }
+          }
           return; // Skip normal movement
         }
       }
@@ -1608,7 +1713,7 @@ export class GameScene extends Phaser.Scene {
         if (Math.sin(hopTime) > 0.9 && monster.position.vy === 0) {
           // Check if near pyramid for stronger hops
           const nearPyramid = Math.abs(monster.position.x - (WORLD_WIDTH * TILE_SIZE / 2)) < TILE_SIZE * 15;
-          monster.position.vy = nearPyramid ? -475 : -425; // Stronger hop near pyramid!
+          monster.position.vy = nearPyramid ? -450 : -400; // Smoother hop forces (was -475, -425)
           monster.energy -= 1; // Small energy cost
         }
       } else if (canFly && monster.energy > 10) {
@@ -1659,6 +1764,14 @@ export class GameScene extends Phaser.Scene {
         (monster as any).isFalling = false; // Flying creatures NEVER fall
         (monster as any).fallHeight = 0; // No fall damage ever
         
+        // ANIMATE FLYING - wing flapping and body bobbing!
+        this.ragdollPhysics.updateFlying(
+          monster.id,
+          monster.position.vx,
+          monster.position.vy,
+          deltaTime
+        );
+        
         const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
         
         if (isCarrying) {
@@ -1703,13 +1816,14 @@ export class GameScene extends Phaser.Scene {
         const fallTime = (monster as any).fallTime || 0;
         (monster as any).fallTime = fallTime + deltaTime;
         
-        // SUPER HEAVY acceleration - instant drop like lemmings!
-        const fallAcceleration = 1 + fallTime * 4; // DOUBLED acceleration!
+        // SMOOTH gravity with air resistance
+        const fallAcceleration = 1 + fallTime * 3; // Smoother acceleration (was * 4)
         monster.position.vy += gravity * deltaTime * fallAcceleration;
-        monster.position.vy = Math.min(monster.position.vy, terminalVelocity * 2); // Fall MUCH faster!
+        monster.position.vy *= airResistance; // Apply air drag for smoothness
+        monster.position.vy = Math.min(monster.position.vy, terminalVelocity * 1.8); // Smoother terminal velocity (was * 2)
         
-        // Almost NO air control - helpless plummet
-        monster.position.vx *= 0.8; // Much less control!
+        // Limited air control
+        monster.position.vx *= 0.85; // Slightly more control (was 0.8)
         
         // Mark as falling for animation
         (monster as any).isFalling = true;
@@ -1746,21 +1860,21 @@ export class GameScene extends Phaser.Scene {
         
         if (monster.position.onGround && shouldAutoJump) {
           // Auto-jump to escape hole or climb towards hive when carrying
-          // ULTRA STRONG jumps for pyramid!
-          const jumpForce = monster.isClimbing ? -950 : // ULTRA jump when climbing without load
-                           nearPyramid && isCarrying ? -900 : // SUPER strong for carrying up pyramid
-                           nearPyramid ? -800 : // Strong pyramid jump
-                           (isCarrying ? -650 : -600); // Stronger normal jumps
+          // SMOOTH jump forces for natural movement
+          const jumpForce = monster.isClimbing ? -900 : // Strong jump when climbing (was -950)
+                           nearPyramid && isCarrying ? -850 : // Strong for carrying up pyramid (was -900)
+                           nearPyramid ? -750 : // Pyramid jump (was -800)
+                           (isCarrying ? -620 : -570); // Normal jumps (was -650, -600)
           monster.position.vy = jumpForce;
           
           // Direct toward hive center when near pyramid
           if (nearPyramid) {
             const hiveDir = this.colonyHive.x > monster.position.x ? 1 : -1;
-            monster.position.vx = hiveDir * 200; // Very strong forward momentum
-            console.log(`Monster ${monster.id} PYRAMID CLIMBING - powerful jump towards hive!`);
+            monster.position.vx = hiveDir * 180; // Strong forward momentum (was 200)
+            // Pyramid climbing - silent
           } else {
-            monster.position.vx = monster.position.vx > 0 ? 160 : -160; // Strong forward momentum
-            console.log(`Monster ${monster.id} ${isCarrying ? 'CARRYING - jumping towards hive' : 'auto-jumping out of hole'}`);
+            monster.position.vx = monster.position.vx > 0 ? 145 : -145; // Forward momentum (was 160)
+            // Auto-jumping - silent
           }
         } else {
           // Only mine if monster has EXPLICIT mining task from player pheromone
@@ -2206,20 +2320,20 @@ export class GameScene extends Phaser.Scene {
               // Space above is clear - JUMP!
               if (isPyramidStep) {
                 // VERY strong jump for pyramid climbing - must clear full blocks!
-                monster.position.vy = -500; // Strong enough to clear full block height
-                monster.position.vx = direction * 120; // Good forward momentum
+                monster.position.vy = -470; // Smoother jump force (was -500)
+                monster.position.vx = direction * 110; // Good forward momentum
                 monster.energy -= 0.5; // Minimal energy cost for pyramid
                 console.log(`Monster ${monster.id} PYRAMID STEP - powerful jump at (${targetTileX}, ${targetTileY})`);
               } else if (isCarrying) {
                 // Strong jump when carrying resources
-                monster.position.vy = -475; // Strong jump for carrying
-                monster.position.vx = direction * 100; // Good momentum when carrying
+                monster.position.vy = -450; // Smoother jump for carrying (was -475)
+                monster.position.vx = direction * 95; // Good momentum when carrying
                 monster.energy -= 0; // Free energy when carrying to hive!
                 console.log(`Monster ${monster.id} CARRYING - jumping at (${targetTileX}, ${targetTileY})`);
               } else {
                 // Normal jump for regular obstacles
-                monster.position.vy = -450; // Strong jump to clear blocks reliably
-                monster.position.vx = direction * 70; // Normal forward momentum
+                monster.position.vy = -425; // Smoother jump force (was -450)
+                monster.position.vx = direction * 65; // Normal forward momentum
                 monster.energy -= 2; // Normal energy cost
                 console.log(`Monster ${monster.id} jumping over block at (${targetTileX}, ${targetTileY})`);
               }
@@ -2558,9 +2672,8 @@ export class GameScene extends Phaser.Scene {
     
     for (let x = startX; x < endX; x++) {
       for (let y = startY; y < endY; y++) {
-        if (this.world[x][y].discovered || Math.random() < 0.01) {
-          this.renderTile(x, y);
-        }
+        // Always render all tiles - let the TerrariaTileRenderer handle fog of war layers
+        this.renderTile(x, y);
       }
     }
   }
@@ -2569,18 +2682,14 @@ export class GameScene extends Phaser.Scene {
     const tile = this.world[x][y];
     const properties = TILE_PROPERTIES[tile.type];
     
-    // Use Terraria-style tile renderer (handles fog of war internally)
+    // Use Terraria-style tile renderer (handles fog of war with progressive layers internally)
     const tileContainer = this.tileRenderer.renderTile(x, y, tile, TILE_SIZE, this.world);
     if (tileContainer) {
       tileContainer.setScrollFactor(1);
-      return; // Tile rendered successfully with edge system
+      return; // Tile rendered successfully (either as tile or fog)
     }
     
-    // If tile wasn't rendered by Terraria renderer, it's either fog or empty
-    if (!tile.discovered && tile.type !== TileType.AIR) {
-      return; // Fog of war is handled by TerrariaTileRenderer
-    }
-    
+    // If tile wasn't rendered by Terraria renderer, it's empty/air
     // No fallback needed - we handle all textures through the dynamic loader
     const spriteCanvas = null;
     

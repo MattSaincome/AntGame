@@ -72,8 +72,7 @@ export class MiningEffects {
     // Create impact shockwave
     this.createShockwave(centerX, centerY);
     
-    // Subtle camera shake for mining feedback
-    this.scene.cameras.main.shake(50, 0.002); // Much more subtle (was 100, 0.005)
+    // Camera shake disabled
   }
 
   /**
