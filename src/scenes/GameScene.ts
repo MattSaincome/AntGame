@@ -20,6 +20,7 @@ import { MonsterType } from '../genetics/GeneticsTypes';
 import { TerrariaTileRenderer } from '../systems/TerrariaTileRenderer';
 import { ProceduralMovementSystem } from '../systems/ProceduralMovementSystem';
 import { bugMonitor } from '../systems/BugMonitor';
+import { RagdollPhysicsSystem } from '../systems/RagdollPhysicsSystem';
 
 export class GameScene extends Phaser.Scene {
   private world!: Tile[][];
@@ -56,6 +57,9 @@ export class GameScene extends Phaser.Scene {
   // Procedural movement system for animations
   private movementSystem!: ProceduralMovementSystem;
   private seedPartLoader!: SeedBasedPartLoader;
+  
+  // Ragdoll physics system for realistic limb animations
+  private ragdollPhysics!: RagdollPhysicsSystem;
   
   constructor() {
     super({ key: 'GameScene' });
@@ -168,6 +172,9 @@ export class GameScene extends Phaser.Scene {
     
     // Initialize movement system
     this.movementSystem = new ProceduralMovementSystem(this);
+    
+    // Initialize ragdoll physics system for realistic limb animations
+    this.ragdollPhysics = new RagdollPhysicsSystem(this);
     
     // Initialize RTS HUD with pheromone and speed controls
     this.rtsHud = new RTSHud(this, this.pheromoneSystem);
@@ -294,6 +301,9 @@ export class GameScene extends Phaser.Scene {
       spriteContainer.name = monster.id; // Set name for animation tracking
       
       monster.setSpriteContainer(spriteContainer);
+      
+      // Initialize ragdoll physics for this monster
+      this.ragdollPhysics.initializeRagdoll(monster.id, spriteContainer, 0, 0);
       
       // Make sprite interactive for clicking
       spriteContainer.setInteractive(monster.getClickBounds(), Phaser.Geom.Rectangle.Contains);
@@ -676,101 +686,62 @@ export class GameScene extends Phaser.Scene {
         }
         */
         
-        // === INDIVIDUAL BODY PART ANIMATIONS ===
+        // === RAGDOLL PHYSICS ANIMATIONS ===
         if (monster.sprite instanceof Phaser.GameObjects.Container) {
           const container = monster.sprite as Phaser.GameObjects.Container;
           
-          // Get individual body parts
-          const leftLeg = container.getByName('leftLeg') as Phaser.GameObjects.Sprite;
-          const rightLeg = container.getByName('rightLeg') as Phaser.GameObjects.Sprite;
-          const leftArm = container.getByName('leftArm') as Phaser.GameObjects.Sprite;
-          const rightArm = container.getByName('rightArm') as Phaser.GameObjects.Sprite;
-          const body = container.getByName('body') as Phaser.GameObjects.Sprite;
-          const head = container.getByName('head') as Phaser.GameObjects.Sprite;
-          
           const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
-          const isJumping = monster.position.vy < -100;
-          const isFalling = monster.position.vy > 100;
+          const isClimbing = monster.isClimbing || false;
           const isMining = monster.state === MonsterState.MINING;
-          const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
           
-          // WALKING ANIMATION - alternating leg swing
-          if (isWalking && leftLeg && rightLeg) {
-            const walkSpeed = Math.abs(monster.position.vx) * 0.015;
-            const walkCycle = Math.sin(this.time.now * walkSpeed);
-            
-            // Legs swing back and forth (opposite)
-            leftLeg.rotation = walkCycle * 0.3; // -0.3 to 0.3 radians
-            rightLeg.rotation = -walkCycle * 0.3;
-            
-            // Arms swing opposite to legs
-            if (leftArm) leftArm.rotation = -walkCycle * 0.2;
-            if (rightArm) rightArm.rotation = walkCycle * 0.2;
-            
-            // Body bobs up and down
-            if (body) {
-              const bob = Math.abs(Math.sin(this.time.now * walkSpeed * 2)) * 2;
-              body.y = bob - 1;
+          // Get ground Y position for foot placement
+          const groundY = this.ragdollPhysics.getGroundY(
+            monster.position.x,
+            monster.position.y,
+            this.world,
+            TILE_SIZE
+          );
+          
+          // Apply appropriate ragdoll physics based on state
+          if (isWalking) {
+            // Realistic walking with feet stepping
+            this.ragdollPhysics.updateWalking(
+              monster.id,
+              container,
+              monster.position.vx,
+              monster.position.vy,
+              groundY - monster.position.y,
+              deltaTime
+            );
+          } else if (isClimbing) {
+            // Hands reach and grab blocks
+            const targetBlock = this.findNearestClimbableBlock(monster);
+            if (targetBlock) {
+              this.ragdollPhysics.updateClimbing(
+                monster.id,
+                container,
+                targetBlock.x * TILE_SIZE,
+                targetBlock.y * TILE_SIZE,
+                true,
+                deltaTime
+              );
             }
-            
-            // Head tilts slightly
-            if (head) head.rotation = walkCycle * 0.05;
-          }
-          // JUMPING - legs tuck up
-          else if (isJumping && leftLeg && rightLeg) {
-            leftLeg.rotation = -0.5; // Tuck up
-            rightLeg.rotation = -0.5;
-            if (leftArm) leftArm.rotation = -0.3; // Arms up
-            if (rightArm) rightArm.rotation = -0.3;
-            if (head) head.rotation = 0;
-            if (body) body.y = 0;
-          }
-          // FALLING - legs dangle
-          else if (isFalling && leftLeg && rightLeg) {
-            leftLeg.rotation = 0.3; // Dangle down
-            rightLeg.rotation = 0.3;
-            if (leftArm) leftArm.rotation = 0.4; // Arms flail
-            if (rightArm) rightArm.rotation = 0.4;
-            if (head) head.rotation = 0;
-            if (body) body.y = 0;
-          }
-          // MINING - arm swing
-          else if (isMining) {
-            const swingSpeed = 0.01;
-            const swing = Math.sin(this.time.now * swingSpeed);
-            if (rightArm) rightArm.rotation = swing * 0.8 - 0.4; // Big swing
-            if (leftArm) leftArm.rotation = swing * 0.2;
-            if (body) {
-              body.rotation = swing * 0.1;
-              body.y = 0;
-            }
-            if (leftLeg) leftLeg.rotation = 0;
-            if (rightLeg) rightLeg.rotation = 0;
-            if (head) head.rotation = swing * 0.05;
-          }
-          // CARRYING - lean forward
-          else if (isCarrying) {
-            if (leftArm) leftArm.rotation = -0.3; // Hold resource
-            if (rightArm) rightArm.rotation = -0.3;
-            if (body) {
-              body.rotation = 0.1; // Lean forward
-              body.y = 1; // Lower from weight
-            }
-            if (leftLeg) leftLeg.rotation = 0.1;
-            if (rightLeg) rightLeg.rotation = 0.1;
-            if (head) head.rotation = -0.1; // Look down at resource
-          }
-          // IDLE - reset to neutral
-          else {
-            if (leftLeg) leftLeg.rotation = 0;
-            if (rightLeg) rightLeg.rotation = 0;
-            if (leftArm) leftArm.rotation = 0;
-            if (rightArm) rightArm.rotation = 0;
-            if (body) {
-              body.rotation = 0;
-              body.y = 0;
-            }
-            if (head) head.rotation = 0;
+          } else if (isMining) {
+            // Hand swings at mining target
+            const swingProgress = (this.time.now % 1000) / 1000; // 1 second cycle
+            const targetX = monster.position.x + (monster.position.vx > 0 ? 30 : -30);
+            const targetY = monster.position.y;
+            this.ragdollPhysics.updateMining(
+              monster.id,
+              container,
+              targetX,
+              targetY,
+              swingProgress,
+              deltaTime
+            );
+          } else {
+            // Idle - return to rest position
+            this.ragdollPhysics.resetToIdle(monster.id);
           }
           
           // Flip container based on movement direction
@@ -2452,6 +2423,34 @@ export class GameScene extends Phaser.Scene {
     return false;
   }
 
+  /**
+   * Find nearest climbable block for ragdoll hand grabbing
+   */
+  private findNearestClimbableBlock(monster: Monster): { x: number; y: number } | null {
+    const monsterTileX = Math.floor(monster.position.x / TILE_SIZE);
+    const monsterTileY = Math.floor(monster.position.y / TILE_SIZE);
+    
+    // Search around monster for solid blocks
+    for (let radius = 1; radius <= 3; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          const tileX = monsterTileX + dx;
+          const tileY = monsterTileY + dy;
+          
+          if (this.world[tileY] && this.world[tileY][tileX]) {
+            const tile = this.world[tileY][tileX];
+            const tileType = typeof tile.type === 'string' ? parseInt(tile.type) : tile.type;
+            if (tileType > 0 && TILE_PROPERTIES[tile.type].solid) {
+              return { x: tileX, y: tileY };
+            }
+          }
+        }
+      }
+    }
+    
+    return null;
+  }
+
   private checkEnemyWaves(): void {
     const waveInterval = 120000; // 2 minutes in milliseconds
     const now = Date.now();
@@ -2687,6 +2686,9 @@ export class GameScene extends Phaser.Scene {
       spriteContainer.name = baby.id; // Set name for animation tracking
       
       baby.setSpriteContainer(spriteContainer);
+      
+      // Initialize ragdoll physics for baby monster
+      this.ragdollPhysics.initializeRagdoll(baby.id, spriteContainer, 0, 0);
       
       // Make sprite interactive for clicking
       spriteContainer.setInteractive(baby.getClickBounds(), Phaser.Geom.Rectangle.Contains);
