@@ -100,11 +100,11 @@ export class ResourceChunkManager {
     
     switch (tileType) {
       case TileType.DIRT:
-        // Dirt is now heavier - often requires 2 monsters
+        // Dirt is LIGHT - single monster can carry
         return {
           count: random < 0.5 ? 2 : 3,
-          size: random < 0.5 ? ChunkSize.LARGE : ChunkSize.SMALL,
-          weight: random < 0.5 ? 35 : 20  // Much heavier (was 15/8)
+          size: ChunkSize.SMALL,  // Always small
+          weight: random < 0.5 ? 15 : 10  // Light enough for 1 carrier
         };
         
       case TileType.STONE:

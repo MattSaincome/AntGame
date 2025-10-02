@@ -261,21 +261,29 @@ export class GameScene extends Phaser.Scene {
 
   private createFirstFamily(): void {
     const hiveX = (WORLD_WIDTH * TILE_SIZE) / 2;
-    const hiveY = 37 * TILE_SIZE - 23; // Spawn 1 block lower - on the actual ground
+    const hiveTileY = Math.floor(this.colonyHive.y / TILE_SIZE);
     
     const firstFamilyGenetics = GeneticsEngine.createFirstFamily();
     
     firstFamilyGenetics.forEach((genetics, index) => {
-      // Place monsters on ground on left and right sides of hive
-      const isLeftSide = index % 2 === 0; // Alternate left/right placement
-      const monsterNumber = Math.floor(index / 2); // 0, 0, 1, 1, 2 for 5 monsters
+      // SAFE SPAWN: Find a safe air tile above the floor
+      // Spawn 7 blocks to the right of hive center
+      const spawnTileX = Math.floor(hiveX / TILE_SIZE) + 7 + index;
+      const floorTileY = hiveTileY + 5;
       
-      // Distance from hive center (40-80 pixels to each side)
-      const baseDistance = 40 + (monsterNumber * 20); 
-      const x = isLeftSide ? hiveX - baseDistance : hiveX + baseDistance;
+      // Find the first AIR tile above the floor
+      let safeTileY = floorTileY - 1; // Start 1 tile above floor
+      while (safeTileY > 0) {
+        const tile = this.world[spawnTileX]?.[safeTileY];
+        if (!tile || tile.type === TileType.AIR) {
+          // Found safe air tile
+          break;
+        }
+        safeTileY--; // Move up
+      }
       
-      // Place directly on the ground level (same Y as hive)
-      const y = hiveY;
+      const x = spawnTileX * TILE_SIZE + (index * 4); // Slight sub-tile offset
+      const y = safeTileY * TILE_SIZE + TILE_SIZE / 2; // Center of air tile, will fall to ground
       
       const monster = new Monster(genetics, x, y, true);
       
@@ -309,19 +317,29 @@ export class GameScene extends Phaser.Scene {
       spriteContainer.setInteractive(monster.getClickBounds(), Phaser.Geom.Rectangle.Contains);
       spriteContainer.on('pointerdown', () => this.selectMonster(monster));
       
-      // Ensure monsters start on solid ground - no falling!
-      monster.position.onGround = true;
-      monster.position.vy = 0; // No falling velocity
-      monster.position.y = hiveY; // Ensure exact Y position on chamber floor
+      // Set initial ground state based on monster type
+      const isFlyer = appearance.hasWings || false;
+      if (isFlyer) {
+        // Flying monsters start AIRBORNE
+        monster.position.onGround = false;
+        monster.position.vy = -150; // Launch upward
+        monster.position.y = y - 30; // Start 30px above ground
+      } else {
+        // Walking monsters start FIRMLY grounded
+        monster.position.onGround = true;
+        monster.position.vy = 0; // Zero vertical velocity
+        monster.position.vx = 0; // Zero horizontal velocity to prevent immediate movement
+        monster.position.y = y; // On ground surface
+      }
       
       this.monsters.push(monster);
       // Keep compatibility with existing MonsterSprite system for now
       this.monsterSprites.set(monster.id, monster as any);
       
-      console.log(`Monster ${monster.id} (${monster.stats.appearance.headType}/${monster.stats.appearance.bodyType}) placed at (${Math.round(x)}, ${Math.round(y)})`);
+      // Spawn complete - no debug needed
     });
     
-    console.log(`Created first family: ${firstFamilyGenetics.length} monsters on ground beside hive`);
+    console.log(`Created first family: ${firstFamilyGenetics.length} monsters spawned 7 blocks right of hive`);
   }
 
   private createUI(): void {
@@ -466,21 +484,11 @@ export class GameScene extends Phaser.Scene {
   private addInitialMiningPheromones(): void {
     // Find the starting chamber location
     const chamberCenterX = Math.floor(WORLD_WIDTH / 2);
-    const chamberY = 40; // Floor of the starting chamber (approximation based on hive position)
+    // Use actual hive position to find floor (hive is 5 blocks above ground)
+    const chamberY = Math.floor(this.colonyHive.y / TILE_SIZE) + 5; // Floor is 5 blocks below hive
     const chamberHalfWidth = 15; // Chamber is about 30 blocks wide
     
-    // Place "DO NOT MINE" pheromones on the entire floor of the starting chamber
-    for (let x = chamberCenterX - chamberHalfWidth; x <= chamberCenterX + chamberHalfWidth; x++) {
-      // Place strong DO_NOT_MINE pheromones on the floor
-      this.pheromoneSystem.addPheromone(
-        x,  // tile X
-        chamberY, // tile Y
-        PheromoneType.DO_NOT_MINE,
-        100, // Max strength
-        0,   // No decay
-        true  // Player-placed (stronger effect)
-      );
-    }
+    // DO_NOT_MINE pheromones removed - monsters can mine the floor if needed
     
     // Place "MINE HERE" pheromones on the walls, 2 blocks up from the floor
     const wallY = chamberY - 2; // 2 blocks above the floor
@@ -532,7 +540,6 @@ export class GameScene extends Phaser.Scene {
     }
     
     console.log('Initial mining pheromones placed:');
-    console.log(`- DO NOT MINE on floor at Y=${chamberY}`);
     console.log(`- MINE HERE on left wall at X=${leftWallX}, Y=${wallY}`);
     console.log(`- MINE HERE on right wall at X=${rightWallX}, Y=${wallY}`);
   }
@@ -703,10 +710,22 @@ export class GameScene extends Phaser.Scene {
             container.setScale(baseScale, baseScale);
           }
           
-          const isWalking = Math.abs(monster.position.vx) > 20 && monster.position.onGround;
+          // Check limb status FIRST
+          const hasWings = this.ragdollPhysics.hasWings(monster.id);
+          const hasLegs = this.ragdollPhysics.hasLegs(monster.id);
+          const canFly = hasWings; // Wings = flying, regardless of legs!
+          
+          // FIXED: Allow walking animation when descending (onGround OR slowly falling)
+          const isDescending = monster.position.vy > -50 && monster.position.vy < 100; // Not jumping, possibly descending stairs
+          const isWalking = Math.abs(monster.position.vx) > 5 && (monster.position.onGround || isDescending);
           const isClimbing = monster.isClimbing || false;
           const isMining = monster.state === MonsterState.MINING;
           const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
+          
+          // Animation logging disabled for performance
+          // if (Math.random() < 0.005) { // 0.5% chance
+          //   console.log(` ${monster.id.substring(0, 20)}: walking=${isWalking}, vx=${monster.position.vx.toFixed(1)}, onGround=${monster.position.onGround}, hasLegs=${hasLegs}, hasWings=${hasWings}`);
+          // }
           
           // Get ground Y position for foot placement
           const groundY = this.ragdollPhysics.getGroundY(
@@ -716,10 +735,8 @@ export class GameScene extends Phaser.Scene {
             TILE_SIZE
           );
           
-          // Apply appropriate ragdoll physics based on state
-          // ALWAYS animate wings for flying monsters!
-          const canFly = monster.sprite && (monster.sprite as any).movementType === 'fly';
           if (canFly) {
+            // ALWAYS animate wings for flying monsters!
             this.ragdollPhysics.updateFlying(
               monster.id,
               monster.position.vx,
@@ -744,8 +761,12 @@ export class GameScene extends Phaser.Scene {
                 monster.position.onGround // Pass ground state
               );
             }
-          } else if (isWalking && !canFly) {
+          } else if (isWalking && hasLegs) {
             // Realistic walking with feet stepping
+            // Walking animation debug disabled for performance
+            // if (Math.random() < 0.001) {
+            //   console.log(`🚶 ${monster.id.substring(0, 15)}: WALKING (vx=${monster.position.vx.toFixed(1)})`);
+            // }
             this.ragdollPhysics.updateWalking(
               monster.id,
               container,
@@ -790,6 +811,441 @@ export class GameScene extends Phaser.Scene {
       
       return true;
     });
+    
+    // DEBUG: Detect stuck monsters (run frequently to catch issues quickly)
+    if (Math.random() < 0.5) { // Run 50% of the time for faster detection
+      this.detectStuckMonsters();
+    }
+  }
+
+  /**
+   * Debug system to detect and log stuck monsters
+   */
+  private detectStuckMonsters(): void {
+    for (const monster of this.monsters) {
+      // Track movement history
+      if (!(monster as any).positionHistory) {
+        (monster as any).positionHistory = [];
+      }
+      
+      const history = (monster as any).positionHistory;
+      history.push({ x: monster.position.x, y: monster.position.y, time: Date.now() });
+      
+      // Keep only last 2 seconds of history (at 60fps = ~120 entries)
+      if (history.length > 120) {
+        history.shift();
+      }
+      
+      // Only analyze if we have enough history (1 second)
+      if (history.length < 60) continue;
+      
+      const recent = history[history.length - 1];
+      const old = history[0];
+      const timeDiff = (recent.time - old.time) / 1000; // seconds
+      const distMoved = Math.sqrt(
+        Math.pow(recent.x - old.x, 2) + 
+        Math.pow(recent.y - old.y, 2)
+      );
+      
+      // STUCK DETECTION #1: Not moving but has velocity
+      const isStuckMoving = distMoved < 5 && (Math.abs(monster.position.vx) > 10 || Math.abs(monster.position.vy) > 50);
+      
+      // STUCK DETECTION #2: Inside solid blocks
+      const monsterTileX = Math.floor(monster.position.x / TILE_SIZE);
+      const monsterTileY = Math.floor(monster.position.y / TILE_SIZE);
+      let isInsideBlock = false;
+      
+      if (monsterTileX >= 0 && monsterTileX < WORLD_WIDTH && monsterTileY >= 0 && monsterTileY < WORLD_HEIGHT) {
+        const tile = this.world[monsterTileX][monsterTileY];
+        if (tile && TILE_PROPERTIES[tile.type].solid) {
+          isInsideBlock = true;
+        }
+      }
+      
+      // STUCK DETECTION #3: Monsters clustered together
+      let nearbyMonsters = 0;
+      let nearbyCarriers = 0;
+      let standingOnOthers = false;
+      
+      for (const other of this.monsters) {
+        if (other.id === monster.id) continue;
+        const dist = Math.sqrt(
+          Math.pow(other.position.x - monster.position.x, 2) + 
+          Math.pow(other.position.y - monster.position.y, 2)
+        );
+        if (dist < TILE_SIZE * 2) { // Within 2 tiles
+          nearbyMonsters++;
+          if (other.carryingChunkId || other.helpingCarryChunkId) {
+            nearbyCarriers++;
+          }
+          
+          // Check if standing directly on another monster (within 8 pixels horizontally, above them)
+          const horizontalDist = Math.abs(monster.position.x - other.position.x);
+          const verticalDist = monster.position.y - other.position.y;
+          if (horizontalDist < 8 && verticalDist < -10 && verticalDist > -TILE_SIZE * 2) {
+            standingOnOthers = true;
+          }
+        }
+      }
+      
+      // LOG STUCK MONSTERS
+      const isCarrying = monster.carryingChunkId || monster.helpingCarryChunkId;
+      
+      if (isStuckMoving) {
+        console.log(`⚠️ STUCK MONSTER (velocity but no movement):`);
+        console.log(`   ID: ${monster.id.substring(0, 25)}`);
+        console.log(`   Pos: (${monster.position.x.toFixed(0)}, ${monster.position.y.toFixed(0)}) Tile:[${monsterTileX},${monsterTileY}]`);
+        console.log(`   Velocity: vx=${monster.position.vx.toFixed(1)}, vy=${monster.position.vy.toFixed(1)}`);
+        console.log(`   Moved: ${distMoved.toFixed(1)}px in ${timeDiff.toFixed(1)}s`);
+        console.log(`   Carrying: ${isCarrying ? 'YES (chunkId=' + (monster.carryingChunkId || monster.helpingCarryChunkId) + ')' : 'NO'}`);
+        console.log(`   Nearby monsters: ${nearbyMonsters} (${nearbyCarriers} carrying)`);
+        console.log(`   OnGround: ${monster.position.onGround}`);
+        
+        // AUTO-RECOVERY: If stuck for more than 2 seconds, make them panic!
+        if (timeDiff > 2) {
+          console.log(`   🔧 AUTO-RECOVERY: Monster PANIC MODE!`);
+          
+          // PANIC MODE - Multiple safe recovery strategies
+          const panicType = Math.random();
+          
+          if (panicType < 0.25) {
+            // SAFE JUMP - max 3.5 blocks in any direction (56px = 3.5 * 16)
+            monster.position.onGround = false;
+            const maxJumpVelocity = 280; // Results in ~3.5 block jump
+            monster.position.vy = -200 - Math.random() * 80; // -200 to -280 (2-3.5 blocks up)
+            monster.position.vx = (Math.random() - 0.5) * maxJumpVelocity; // Max 3.5 blocks sideways
+            console.log(`   💥 Panic: Safe jump (max 3.5 blocks)!`);
+          } else if (panicType < 0.5) {
+            // PANIC SHAKE - Break the block they're stuck against!
+            console.log(`   🔨 Panic: SHAKE & BREAK!`);
+            
+            // Determine which direction they're stuck (based on velocity)
+            let breakX = monsterTileX * TILE_SIZE;
+            let breakY = monsterTileY * TILE_SIZE;
+            let direction: 'horizontal' | 'down' = 'horizontal';
+            
+            if (Math.abs(monster.position.vx) > Math.abs(monster.position.vy)) {
+              // Stuck horizontally - break block in front
+              breakX = monster.position.vx > 0 ? (monsterTileX + 1) * TILE_SIZE : (monsterTileX - 1) * TILE_SIZE;
+              direction = 'horizontal';
+            } else {
+              // Stuck vertically - break block above/below
+              breakY = monster.position.vy > 0 ? (monsterTileY + 1) * TILE_SIZE : (monsterTileY - 1) * TILE_SIZE;
+              direction = 'down';
+            }
+            
+            // Break the blocking tile (if it exists and is mineable)
+            const checkTileX = Math.floor(breakX / TILE_SIZE);
+            const checkTileY = Math.floor(breakY / TILE_SIZE);
+            if (checkTileX >= 0 && checkTileX < WORLD_WIDTH && checkTileY >= 0 && checkTileY < WORLD_HEIGHT) {
+              const blockingTile = this.world[checkTileX][checkTileY];
+              if (blockingTile && blockingTile.type !== TileType.AIR && blockingTile.type !== TileType.BEDROCK) {
+                console.log(`   💥 Breaking ${blockingTile.type} at [${checkTileX},${checkTileY}]!`);
+                this.tryMineBlock(monster, breakX, breakY, direction);
+                
+                // Violent shake animation
+                monster.position.vx += (Math.random() - 0.5) * 100;
+                monster.position.vy += (Math.random() - 0.5) * 100;
+              }
+            }
+            
+            // Small push away from stuck position
+            monster.position.onGround = false;
+            monster.position.vy = -150;
+          } else if (panicType < 0.75) {
+            // DIRECTION CHANGE - Try walking opposite direction
+            console.log(`   🔄 Panic: Reverse direction!`);
+            
+            // Flip horizontal velocity
+            monster.position.vx = -monster.position.vx;
+            if (Math.abs(monster.position.vx) < 50) {
+              // If barely moving, give strong push
+              monster.position.vx = (Math.random() < 0.5 ? -1 : 1) * 200;
+            }
+            
+            // Small hop to change state
+            monster.position.onGround = false;
+            monster.position.vy = -100;
+            
+            // Clear target to allow free roaming
+            monster.target = null;
+          } else {
+            // RANDOM WANDER - New exploration direction
+            console.log(`   🎯 Panic: Random wander!`);
+            
+            const randomDir = Math.random() < 0.5 ? -1 : 1;
+            const randomDist = 2 + Math.random() * 3; // 2-5 tiles away (safe distance)
+            monster.target = {
+              x: monster.position.x + (randomDir * randomDist * TILE_SIZE),
+              y: monster.position.y - TILE_SIZE // Aim slightly upward
+            };
+            monster.position.onGround = false;
+            monster.position.vy = -80; // Gentle hop
+            monster.position.vx = randomDir * 150; // Walk in chosen direction
+          }
+          
+          // Clear stuck history so we don't spam recovery
+          (monster as any).positionHistory = [];
+        }
+      }
+      
+      if (isInsideBlock) {
+        console.log(`🔴 MONSTER INSIDE BLOCK:`);
+        console.log(`   ID: ${monster.id.substring(0, 25)}`);
+        console.log(`   Pos: (${monster.position.x.toFixed(0)}, ${monster.position.y.toFixed(0)}) Tile:[${monsterTileX},${monsterTileY}]`);
+        console.log(`   Block type: ${this.world[monsterTileX][monsterTileY].type}`);
+        console.log(`   Velocity: vx=${monster.position.vx.toFixed(1)}, vy=${monster.position.vy.toFixed(1)}`);
+        console.log(`   OnGround: ${monster.position.onGround}`);
+        
+        // AUTO-RECOVERY: Safely move monster out of solid block
+        console.log(`   🔧 AUTO-RECOVERY: Escaping from inside block...`);
+        
+        // SAFE ESCAPE: Find nearest air tile (max 3 tiles away)
+        let airTileY = monsterTileY - 1;
+        while (airTileY >= 0) {
+          const tile = this.world[monsterTileX][airTileY];
+          if (!tile || tile.type === TileType.AIR) {
+            // Found air - teleport here
+            monster.position.y = airTileY * TILE_SIZE + TILE_SIZE / 2;
+            monster.position.onGround = false;
+            monster.position.vy = 0;
+            console.log(`   ✅ Teleported to air tile at Y=${airTileY}`);
+            break;
+          }
+          airTileY--;
+        }
+      }
+      
+      // COOPERATIVE CLIMBING: Check if in a deep pit and should stack
+      const inDeepPit = this.checkIfInDeepPit(monster, monsterTileX, monsterTileY);
+      
+      if (inDeepPit && nearbyMonsters > 0 && timeDiff > 1.5) {
+        // In a pit with other monsters - try cooperative climbing!
+        this.attemptCooperativeClimbing(monster, monsterTileX, monsterTileY);
+      } else if (standingOnOthers && monster.position.onGround && !inDeepPit) {
+        // NOT in pit - regular anti-pileup (jump off)
+        console.log(`🦘 ANTI-PILEUP: Monster jumping off another monster!`);
+        monster.position.onGround = false;
+        monster.position.vy = -250; // Jump up
+        monster.position.vx = (Math.random() - 0.5) * 400; // Random horizontal
+        (monster as any).positionHistory = []; // Reset history
+      }
+      
+      if (isCarrying && nearbyMonsters >= 2 && distMoved < 10) {
+        console.log(`📦 CARRIER STUCK WITH OTHERS:`);
+        console.log(`   ID: ${monster.id.substring(0, 25)}`);
+        console.log(`   Pos: (${monster.position.x.toFixed(0)}, ${monster.position.y.toFixed(0)})`);
+        console.log(`   Chunk: ${monster.carryingChunkId || monster.helpingCarryChunkId}`);
+        console.log(`   Nearby monsters: ${nearbyMonsters} (${nearbyCarriers} also carrying)`);
+        console.log(`   Moved: ${distMoved.toFixed(1)}px in ${timeDiff.toFixed(1)}s`);
+        
+        // Check if resource is being thrown back and forth
+        if (monster.carryingChunkId) {
+          const chunk = this.resourceChunkManager.chunks.get(monster.carryingChunkId);
+          if (chunk) {
+            console.log(`   Resource pos: (${chunk.x.toFixed(0)}, ${chunk.y.toFixed(0)})`);
+          }
+        }
+        
+        // AUTO-RECOVERY for stuck carriers
+        if (timeDiff > 3) {
+          console.log(`   🔧 Dropping resource and escaping...`);
+          // Drop the resource
+          if (monster.carryingChunkId) {
+            const chunk = this.resourceChunkManager.chunks.get(monster.carryingChunkId);
+            if (chunk) {
+              chunk.isBeingCarried = false;
+              chunk.currentCarriers = [];
+            }
+            monster.carryingChunkId = null;
+          }
+          monster.helpingCarryChunkId = null;
+          
+          // Escape with a jump
+          monster.position.onGround = false;
+          monster.position.vy = -350;
+          monster.position.vx = (Math.random() - 0.5) * 500;
+          (monster as any).positionHistory = [];
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if a monster is in a deep pit (2+ blocks deep with walls on sides)
+   */
+  private checkIfInDeepPit(monster: Monster, tileX: number, tileY: number): boolean {
+    // Check walls on left and right
+    const hasLeftWall = this.world[tileX - 1]?.[tileY] && TILE_PROPERTIES[this.world[tileX - 1][tileY].type].solid;
+    const hasRightWall = this.world[tileX + 1]?.[tileY] && TILE_PROPERTIES[this.world[tileX + 1][tileY].type].solid;
+    
+    if (!hasLeftWall && !hasRightWall) {
+      return false; // Not in a pit, can walk out
+    }
+    
+    // Check pit depth - count air tiles above until we hit solid or open space
+    let airTilesAbove = 0;
+    for (let checkY = tileY - 1; checkY >= 0 && airTilesAbove < 5; checkY--) {
+      const tile = this.world[tileX]?.[checkY];
+      if (!tile || tile.type === TileType.AIR) {
+        airTilesAbove++;
+        
+        // Check if this level has an exit (no walls)
+        const hasLeftWallAtLevel = this.world[tileX - 1]?.[checkY] && TILE_PROPERTIES[this.world[tileX - 1][checkY].type].solid;
+        const hasRightWallAtLevel = this.world[tileX + 1]?.[checkY] && TILE_PROPERTIES[this.world[tileX + 1][checkY].type].solid;
+        
+        if (!hasLeftWallAtLevel || !hasRightWallAtLevel) {
+          // Found an exit at this level
+          break;
+        }
+      } else {
+        // Hit ceiling
+        break;
+      }
+    }
+    
+    return airTilesAbove >= 2; // Pit is 2+ blocks deep
+  }
+
+  /**
+   * Attempt cooperative climbing - monsters stack on each other to escape pits
+   */
+  private attemptCooperativeClimbing(monster: Monster, tileX: number, tileY: number): void {
+    // Find other monsters in the same pit
+    const monstersInPit: Monster[] = [];
+    
+    for (const other of this.monsters) {
+      if (other.id === monster.id) continue;
+      
+      const otherTileX = Math.floor(other.position.x / TILE_SIZE);
+      const otherTileY = Math.floor(other.position.y / TILE_SIZE);
+      
+      // Check if in same X column and close vertically
+      const horizontalDist = Math.abs(other.position.x - monster.position.x);
+      const verticalDist = Math.abs(other.position.y - monster.position.y);
+      
+      if (horizontalDist < TILE_SIZE * 1.5 && verticalDist < TILE_SIZE * 3) {
+        // Check if this monster is also in a pit
+        if (this.checkIfInDeepPit(other, otherTileX, otherTileY)) {
+          monstersInPit.push(other);
+        }
+      }
+    }
+    
+    if (monstersInPit.length === 0) {
+      return; // No one to climb with
+    }
+    
+    // Check if already in a climb formation
+    if ((monster as any).isClimbingBase || (monster as any).isClimbingTop) {
+      // Already climbing - check if top monster should jump out
+      if ((monster as any).isClimbingTop) {
+        const pitExit = this.findPitExit(tileX, tileY);
+        if (pitExit) {
+          console.log(`🧗 Top monster escaping pit!`);
+          monster.position.onGround = false;
+          monster.position.vy = -200; // Jump up
+          monster.position.vx = (pitExit.x - monster.position.x) * 2; // Jump toward exit
+          (monster as any).isClimbingTop = false;
+          (monster as any).climbingOnId = null;
+          (monster as any).positionHistory = [];
+        }
+      }
+      return;
+    }
+    
+    // Sort by Y position - lowest becomes base
+    const allInPit = [monster, ...monstersInPit].sort((a, b) => b.position.y - a.position.y);
+    
+    // First monster becomes base, second climbs on top
+    if (allInPit[0].id === monster.id && monstersInPit.length > 0) {
+      // This monster is the base
+      console.log(`🧗 BASE: ${monster.id.substring(0, 15)} - holding still for climbing`);
+      (monster as any).isClimbingBase = true;
+      (monster as any).baseStartTime = this.time.now;
+      monster.position.vx = 0; // Stay still
+      monster.position.vy = 0;
+      monster.position.onGround = true;
+      
+      // Set climber on top
+      const climber = monstersInPit[0];
+      if (!(climber as any).isClimbingTop && !(climber as any).isClimbingBase) {
+        console.log(`🧗 CLIMBER: ${climber.id.substring(0, 15)} - climbing on ${monster.id.substring(0, 15)}`);
+        (climber as any).isClimbingTop = true;
+        (climber as any).climbingOnId = monster.id;
+        (climber as any).climbStartTime = this.time.now;
+      }
+    } else if ((monster as any).climbingOnId) {
+      // This monster is climbing on someone
+      const base = this.monsters.find(m => m.id === (monster as any).climbingOnId);
+      if (base) {
+        // Position on top of base monster
+        monster.position.x = base.position.x;
+        monster.position.y = base.position.y - TILE_SIZE * 1.5; // Stand 1.5 blocks above
+        monster.position.onGround = false;
+        
+        // Animate climbing legs
+        if (monster.sprite instanceof Phaser.GameObjects.Container) {
+          const container = monster.sprite as Phaser.GameObjects.Container;
+          this.ragdollPhysics.updateClimbing(
+            monster.id,
+            container,
+            base.position.x,
+            base.position.y - TILE_SIZE,
+            true,
+            0.016, // ~60fps
+            0 // No horizontal movement
+          );
+        }
+        
+        // After 2 seconds, try to escape
+        const climbDuration = (this.time.now - (monster as any).climbStartTime) / 1000;
+        if (climbDuration > 2) {
+          const pitExit = this.findPitExit(tileX, tileY);
+          if (pitExit) {
+            console.log(`🧗 ESCAPE: ${monster.id.substring(0, 15)} jumping out of pit!`);
+            monster.position.onGround = false;
+            monster.position.vy = -250; // Strong jump up
+            monster.position.vx = (pitExit.x - monster.position.x) * 3; // Jump toward exit
+            (monster as any).isClimbingTop = false;
+            (monster as any).climbingOnId = null;
+            (monster as any).positionHistory = [];
+            
+            // Base can stop being base after climber escapes
+            if (base) {
+              setTimeout(() => {
+                (base as any).isClimbingBase = false;
+              }, 500);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Find the exit direction from a pit
+   */
+  private findPitExit(tileX: number, tileY: number): { x: number; y: number } | null {
+    // Check upward for first level with an opening
+    for (let checkY = tileY - 1; checkY >= 0 && checkY > tileY - 5; checkY--) {
+      const leftTile = this.world[tileX - 1]?.[checkY];
+      const rightTile = this.world[tileX + 1]?.[checkY];
+      
+      const leftBlocked = leftTile && TILE_PROPERTIES[leftTile.type].solid;
+      const rightBlocked = rightTile && TILE_PROPERTIES[rightTile.type].solid;
+      
+      if (!leftBlocked) {
+        // Exit on left
+        return { x: (tileX - 1) * TILE_SIZE, y: checkY * TILE_SIZE };
+      }
+      if (!rightBlocked) {
+        // Exit on right
+        return { x: (tileX + 1) * TILE_SIZE, y: checkY * TILE_SIZE };
+      }
+    }
+    
+    return null; // No exit found
   }
 
   /**
@@ -1349,8 +1805,29 @@ export class GameScene extends Phaser.Scene {
             }
           }
         } else if (nearbyChunk.currentCarriers.length < nearbyChunk.carriersNeeded) {
-          // Join existing carrying team - monsters love helping!
-          if (this.resourceChunkManager.addCarrier(nearbyChunk.id, monster.id)) {
+          // Join existing carrying team - BUT check compatibility!
+          const canFly = this.ragdollPhysics.hasWings(monster.id);
+          
+          // Check if existing carriers are compatible
+          let teamHasFlyers = false;
+          let teamHasGroundMonsters = false;
+          for (const carrierId of nearbyChunk.currentCarriers) {
+            const carrier = this.monsters.find(m => m.id === carrierId);
+            if (carrier) {
+              if (this.ragdollPhysics.hasWings(carrier.id)) {
+                teamHasFlyers = true;
+              } else {
+                teamHasGroundMonsters = true;
+              }
+            }
+          }
+          
+          // RULE: Flyers only co-carry with other flyers on HEAVY objects (3+ carriers needed)
+          // RULE: Ground monsters can't mix with flyers
+          const canJoinTeam = (canFly && teamHasFlyers && !teamHasGroundMonsters && nearbyChunk.carriersNeeded >= 3) ||
+                              (!canFly && !teamHasFlyers && teamHasGroundMonsters);
+          
+          if (canJoinTeam && this.resourceChunkManager.addCarrier(nearbyChunk.id, monster.id)) {
             monster.helpingCarryChunkId = nearbyChunk.id;
             monster.currentAction = monster.currentAction;
           }
@@ -1538,42 +2015,205 @@ export class GameScene extends Phaser.Scene {
       monster.tryPickUpThrownResource(this.resourceChunkManager);
     }
     
-    // Check if monster can fly
-    const canFly = monster.sprite && (monster.sprite as any).movementType === 'fly';
+    // Check if monster can fly - use WINGS, not movementType!
+    const canFly = this.ragdollPhysics.hasWings(monster.id); // All winged monsters fly!
     const canHop = monster.sprite && (monster.sprite as any).movementType === 'hop';
     
-    // SMOOTH GRAVITY with air resistance for natural jumping
-    const gravity = canFly ? 0 : 1400; // Reduced gravity for smoother jumps (was 1600)
-    const terminalVelocity = canFly ? 0 : 700; // Reduced terminal velocity (was 800)
-    const airResistance = 0.98; // Air drag smooths vertical movement
-    const groundFriction = 0.85; // Less friction - more sliding
+    // STRONG GRAVITY - non-flyers FALL HARD
+    const gravity = canFly ? 0 : 2000; // Heavy gravity for realistic falling
+    const terminalVelocity = canFly ? 0 : 900; // Fast terminal velocity
+    const airResistance = 0.95; // Less air resistance = faster fall
+    const groundFriction = 0.75; // More friction - less sliding
     const wallCrawlSpeed = 0.05; // EXTREMELY slow wall-crawling (was 0.1)
     const wallCrawlEnergyDrain = 8.0 * deltaTime; // MASSIVE energy cost for wall climbing
     
+    // ====== MARIO-STYLE PLATFORM PHYSICS ======
+    // Multi-point collision detection for smooth platforming
+    
     const currentTileX = Math.floor(monster.position.x / TILE_SIZE);
     const currentTileY = Math.floor(monster.position.y / TILE_SIZE);
-    const belowTileY = currentTileY + 1;
     
-    // Check if there's solid ground directly below
+    // MONSTER DIMENSIONS - Get REAL bounds from sprite container
+    // Monster position represents the CENTER of the sprite container
+    // We need to calculate actual feet position from container bounds
+    
+    let monsterHeight = 16; // Default fallback
+    let monsterWidth = 12; // Default fallback
+    
+    if (monster.sprite && monster.sprite.getBounds) {
+      const bounds = monster.sprite.getBounds();
+      monsterHeight = bounds.height || 16;
+      monsterWidth = bounds.width || 12;
+    }
+    
+    const halfHeight = monsterHeight / 2;
+    const halfWidth = monsterWidth / 2;
+    
+    // FEET = bottom of sprite container
+    const feetY = monster.position.y + halfHeight;
+    const leftFootX = monster.position.x - halfWidth;
+    const rightFootX = monster.position.x + halfWidth;
+    
+    // DEBUG: Enable detailed physics debugging
+    const ENABLE_PHYSICS_DEBUG = true; // Set to false to disable all debug logs
+    const DEBUG_SAMPLE_RATE = 0.02; // 2% sample rate
+    const debugThis = ENABLE_PHYSICS_DEBUG && Math.random() < DEBUG_SAMPLE_RATE;
+    
+    // ANOMALY DETECTION: Track before/after state for this monster
+    const monsterDebugKey = `debug_${monster.id}`;
+    if (!(monster as any)[monsterDebugKey]) {
+      (monster as any)[monsterDebugKey] = {
+        lastPos: { x: monster.position.x, y: monster.position.y },
+        lastState: { onGround: monster.position.onGround, insideBlock: false },
+        frameCount: 0
+      };
+    }
+    const debugState = (monster as any)[monsterDebugKey];
+    
+    // Store BEFORE state
+    const beforePos = { x: monster.position.x, y: monster.position.y };
+    const beforeOnGround = monster.position.onGround;
+    
+    // MARIO-STYLE GROUND DETECTION
+    // Check 3 points: left foot, center, right foot
+    // Need at least ONE point on solid ground to be grounded
     let hasGroundSupport = false;
-    if (belowTileY < WORLD_HEIGHT && currentTileX >= 0 && currentTileX < WORLD_WIDTH) {
-      const tileBelow = this.world[currentTileX][belowTileY];
-      if (tileBelow && TILE_PROPERTIES[tileBelow.type].solid) {
-        hasGroundSupport = true;
+    let groundSurfaceY = 0;
+    
+    const checkPoints = [
+      { x: leftFootX, label: 'left foot' },
+      { x: monster.position.x, label: 'center' },
+      { x: rightFootX, label: 'right foot' }
+    ];
+    
+    // DETAILED DEBUG LOG
+    if (debugThis) {
+      console.log(`\n🔍 PHYSICS DEBUG: ${monster.id.substring(0, 20)}`);
+      console.log(`   📍 Position: (${monster.position.x.toFixed(1)}, ${monster.position.y.toFixed(1)})`);
+      console.log(`   📊 Current Tile: [${currentTileX}, ${currentTileY}]`);
+      console.log(`   🦶 Feet Y: ${feetY.toFixed(1)} (in tile ${Math.floor(feetY / TILE_SIZE)})`);
+      console.log(`   ⚡ Velocity: vx=${monster.position.vx.toFixed(1)}, vy=${monster.position.vy.toFixed(1)}`);
+      console.log(`   🎮 State: onGround=${monster.position.onGround}, isJumping=${monster.position.vy < -50}`);
+      console.log(`   👣 Checking 3 points: [${leftFootX.toFixed(1)}, ${monster.position.x.toFixed(1)}, ${rightFootX.toFixed(1)}]`);
+    }
+    
+    for (const point of checkPoints) {
+      const checkTileX = Math.floor(point.x / TILE_SIZE);
+      
+      // Check for ground: Look at the tile the feet are currently IN
+      // If feet are at Y=607 (tile 37), check tile 37 for solid blocks
+      const feetTileY = Math.floor(feetY / TILE_SIZE);
+      const checkTileY = feetTileY; // Check the tile where feet are AT
+      
+      if (debugThis) {
+        console.log(`   🔎 ${point.label}: checking tile [${checkTileX}, ${checkTileY}]`);
+      }
+      
+      if (checkTileX >= 0 && checkTileX < WORLD_WIDTH && checkTileY >= 0 && checkTileY < WORLD_HEIGHT) {
+        const tileBelow = this.world[checkTileX][checkTileY];
+        
+        if (debugThis) {
+          console.log(`      Tile type: ${tileBelow?.type || 'NONE'}, solid: ${tileBelow ? TILE_PROPERTIES[tileBelow.type].solid : false}`);
+        }
+        
+        if (tileBelow && TILE_PROPERTIES[tileBelow.type].solid) {
+          const tileSurfaceY = checkTileY * TILE_SIZE; // Top of tile
+          const distanceAboveSurface = tileSurfaceY - feetY; // Positive = monster above tile
+          
+          if (debugThis) {
+            console.log(`      Surface Y: ${tileSurfaceY}, Distance: ${distanceAboveSurface.toFixed(1)}px`);
+            console.log(`      Within range? ${distanceAboveSurface >= -2 && distanceAboveSurface <= TILE_SIZE}`);
+          }
+          
+          // MARIO-STYLE: Need to be within 1 tile (16px) above the ground surface
+          if (distanceAboveSurface >= -2 && distanceAboveSurface <= TILE_SIZE) {
+            hasGroundSupport = true;
+            groundSurfaceY = tileSurfaceY;
+            
+            if (debugThis) {
+              console.log(`   ✅ GROUND FOUND via ${point.label}!`);
+            }
+            break; // Found ground, no need to check other points
+          }
+        }
+      } else if (debugThis) {
+        console.log(`      ⚠️ Out of bounds!`);
+      }
+    }
+    
+    if (debugThis) {
+      if (!hasGroundSupport && monster.position.onGround) {
+        console.log(`   🌊 CLIFF DETECTED: Was grounded, no ground found below!`);
+      } else if (!hasGroundSupport) {
+        console.log(`   ❌ NO GROUND FOUND - Monster should be falling`);
       }
     }
 
     // Wall crawling disabled
     const canWallCrawl = false;
     
-    if (hasGroundSupport) {
-      // WALKING/HOPPING ON SOLID GROUND
-      monster.isWallCrawling = false;
-      monster.facingBackward = false;
-      monster.position.onGround = true;
+    if (hasGroundSupport && !canFly) {
+      // MARIO-STYLE: Only ground if falling or stationary (not jumping up)
+      const isJumpingUp = monster.position.vy < -50; // Moving up fast = jumping
+      const justJumped = (monster as any).justJumped;
+      
+      if (isJumpingUp || justJumped) {
+        // JUMPING UP - stay airborne even if over ground
+        monster.position.onGround = false;
+        monster.isWallCrawling = false;
+        monster.facingBackward = false;
+      } else {
+        // LANDING or GROUNDED
+        const wasAirborne = !monster.position.onGround;
+        const justJumped = (monster as any).justJumpedThisFrame || false;
+        
+        monster.isWallCrawling = false;
+        monster.facingBackward = false;
+        monster.position.onGround = true;
+        
+        // CRITICAL MARIO-STYLE SNAPPING: Position CENTER so FEET are on ground!
+        // groundSurfaceY = top of tile (where feet should be)
+        // monster.position.y = center of sprite
+        // So: center.y = groundSurfaceY - (sprite_height / 2)
+        
+        // Use dimensions already calculated at top of function
+        const distanceFromSurface = groundSurfaceY - feetY;
+        const oldY = monster.position.y;
+        
+        // ALWAYS snap when ground is detected to prevent sinking (BUT NOT if just jumped!)
+        if (Math.abs(distanceFromSurface) <= TILE_SIZE && !justJumped) {
+          // Position center so feet are EXACTLY on ground surface
+          const correctCenterY = groundSurfaceY - halfHeight;
+          monster.position.y = correctCenterY;
+          monster.position.vy = 0; // Stop falling
+          
+          if (debugThis) {
+            console.log(`   📍 SNAP TO GROUND:`);
+            console.log(`      groundSurfaceY: ${groundSurfaceY}`);
+            console.log(`      monsterHeight: ${monsterHeight.toFixed(1)}, halfHeight: ${halfHeight.toFixed(1)}`);
+            console.log(`      oldY (center): ${oldY.toFixed(1)} → ${monster.position.y.toFixed(1)}`);
+            console.log(`      oldFeetY: ${(oldY + halfHeight).toFixed(1)} → newFeetY: ${(monster.position.y + halfHeight).toFixed(1)}`);
+            console.log(`      Distance moved: ${(monster.position.y - oldY).toFixed(1)}px`);
+          }
+        }
+        
+        // Reset jump states
+        monster.hasJumped = false;
+        monster.canDoubleJump = false;
+        (monster as any).justJumped = false;
+        
+        if (debugThis && wasAirborne) {
+          console.log(`   🚶 LANDED at centerY=${monster.position.y.toFixed(1)}, feetY=${(monster.position.y + halfHeight).toFixed(1)}, groundSurface=${groundSurfaceY}`);
+        }
+        
+        if (debugThis) {
+          console.log(`   ✅ GROUNDED: onGround=true, vy=0\n`);
+        }
+      }
       
       // Check fall damage based on fall height (measured from FEET, 16px = 1 block)
-      if ((monster as any).isFalling && (monster as any).fallHeight > 0) {
+      // FLYING MONSTERS DON'T TAKE FALL DAMAGE!
+      if (!canFly && (monster as any).isFalling && (monster as any).fallHeight > 0) {
         const fallBlocks = (monster as any).fallHeight / TILE_SIZE; // Convert to blocks
         
         // 1.5 BLOCKS OR LESS - No reaction (normal walking down)
@@ -1651,17 +2291,31 @@ export class GameScene extends Phaser.Scene {
       // Handle recovery from face plant
       if ((monster as any).facePlanted) {
         (monster as any).recoverTime -= deltaTime;
+        
+        // DEBUG: Log recovery progress
+        if (Math.random() < 0.01) { // 1% chance to log (avoid spam)
+          console.log(`🔄 ${monster.id.substring(0, 20)} recovering: ${((monster as any).recoverTime).toFixed(2)}s remaining`);
+        }
+        
         if ((monster as any).recoverTime <= 0) {
           (monster as any).facePlanted = false; // Recovered!
+          console.log(`✅ ${monster.id.substring(0, 20)} RECOVERED from face plant!`);
+          
           // Reset rotation and eyes
           if (monster.sprite) {
             monster.sprite.rotation = 0;
+            monster.sprite.y = monster.position.y; // Reset Y position
             // Find and reopen eyes
             const container = monster.sprite as Phaser.GameObjects.Container;
             if (container.list) {
               container.list.forEach((child: any) => {
                 if (child.name && child.name.includes('eye')) {
                   child.setScale(child.scaleX, child.scaleX); // Restore Y scale
+                }
+                // Reset arms to rest position
+                if (child.name && (child.name.includes('leftArm') || child.name.includes('rightArm'))) {
+                  child.y = child.restY || 15;
+                  child.rotation = 0;
                 }
               });
             }
@@ -1671,39 +2325,68 @@ export class GameScene extends Phaser.Scene {
           monster.position.vx = 0;
           monster.position.vy = 0;
           
-          // Face plant visual - ENTIRE CONTAINER rotates horizontal, eyes close
+          // Face plant visual with ARMS PUSHING UP
           if (monster.sprite) {
             const recoverProgress = 1.0 - ((monster as any).recoverTime / 0.75);
             const container = monster.sprite as Phaser.GameObjects.Container;
             
-            if (recoverProgress < 0.5) {
-              // First half - falling/laying flat, eyes CLOSED
+            if (recoverProgress < 0.4) {
+              // Phase 1: Lying flat, eyes closed (first 40%)
               container.rotation = Math.PI / 2; // 90 degrees (horizontal)
+              container.y = monster.position.y + 6; // Lying on ground
               
-              // Close eyes (scale Y to 0)
+              // Close eyes
               if (container.list) {
                 container.list.forEach((child: any) => {
                   if (child.name && child.name.includes('eye')) {
-                    child.setScale(child.scaleX, 0); // Close eyes!
+                    child.setScale(child.scaleX, 0); // Closed!
+                  }
+                  // Arms lying flat
+                  if (child.name && (child.name.includes('leftArm') || child.name.includes('rightArm'))) {
+                    child.y = 20; // Arms down
+                  }
+                });
+              }
+            } else if (recoverProgress < 0.7) {
+              // Phase 2: Arms pushing up (40-70%)
+              const pushProgress = (recoverProgress - 0.4) / 0.3; // 0 to 1
+              container.rotation = (Math.PI / 2) * (1 - pushProgress * 0.5); // Start rotating up
+              container.y = monster.position.y + 6 * (1 - pushProgress * 0.3); // Lifting slightly
+              
+              // Arms PUSHING animation
+              if (container.list) {
+                container.list.forEach((child: any) => {
+                  if (child.name && (child.name.includes('leftArm') || child.name.includes('rightArm'))) {
+                    child.y = 20 - pushProgress * 25; // Arms extending down to push
+                    child.rotation = pushProgress * 0.3; // Slight bend
+                  }
+                  // Eyes still closed
+                  if (child.name && child.name.includes('eye')) {
+                    child.setScale(child.scaleX, child.scaleX * pushProgress * 0.3); // Starting to open
                   }
                 });
               }
             } else {
-              // Second half - getting back up, eyes OPENING
-              const standProgress = (recoverProgress - 0.5) * 2; // 0 to 1
-              container.rotation = (Math.PI / 2) * (1 - standProgress); // Rotate back to 0
+              // Phase 3: Standing up (70-100%)
+              const standProgress = (recoverProgress - 0.7) / 0.3; // 0 to 1
+              container.rotation = (Math.PI / 2) * 0.5 * (1 - standProgress); // Finish rotation
+              container.y = monster.position.y; // Back to normal height
               
-              // Open eyes gradually
+              // Arms returning to rest, eyes opening
               if (container.list) {
                 container.list.forEach((child: any) => {
+                  if (child.name && (child.name.includes('leftArm') || child.name.includes('rightArm'))) {
+                    child.y = -5 + (1 - standProgress) * 20; // Arms retracting
+                    child.rotation = (1 - standProgress) * 0.3;
+                  }
                   if (child.name && child.name.includes('eye')) {
-                    child.setScale(child.scaleX, child.scaleX * standProgress); // Eyes opening!
+                    child.setScale(child.scaleX, child.scaleX * (0.3 + standProgress * 0.7)); // Fully opening
                   }
                 });
               }
             }
           }
-          return; // Skip normal movement
+          return; // Skip normal movement during recovery
         }
       }
       
@@ -1716,18 +2399,60 @@ export class GameScene extends Phaser.Scene {
           monster.position.vy = nearPyramid ? -450 : -400; // Smoother hop forces (was -475, -425)
           monster.energy -= 1; // Small energy cost
         }
-      } else if (canFly && monster.energy > 10) {
-        // Flying creatures can take off from ground
-        if (Math.abs(monster.position.vx) > 0.1 || Math.abs(monster.position.vy) < -0.1) {
-          monster.position.vy = -150; // Gentle lift-off
-          monster.energy -= 0.5 * deltaTime; // Flying costs energy
+      } else if (canFly && monster.energy > 5) {
+        // Flying creatures NEVER stay on ground - immediate takeoff
+        monster.position.vy = -250; // Strong lift-off force
+        monster.position.onGround = false; // Never grounded
+        monster.energy -= 0.3 * deltaTime; // Minimal flying cost
+      }
+      
+      // Apply ground friction always when on ground
+      monster.position.vx *= groundFriction;
+      
+      // Prevent bouncing
+      if (monster.position.vy > 0) {
+        monster.position.vy = 0;
+      }
+    } else if (!hasGroundSupport && !canFly) {
+      // NO GROUND SUPPORT - FALLING!
+      monster.isWallCrawling = false;
+      monster.facingBackward = false;
+      
+      // COYOTE TIME: Brief grace period after walking off edge
+      // Allows jump input for ~100ms after leaving ground (like Mario!)
+      if (monster.position.onGround) {
+        (monster as any).coyoteTime = 0.1; // 100ms grace period
+        if (debugThis) {
+          console.log(`   🕐 COYOTE TIME activated (100ms grace)`);
         }
       }
       
-      if (monster.position.vy > 0) {
-        monster.position.vy = 0;
-        monster.position.vx *= groundFriction;
+      const wasGrounded = monster.position.onGround;
+      monster.position.onGround = false;
+      
+      if (debugThis && wasGrounded) {
+        console.log(`   ❌ NO LONGER GROUNDED: Starting to fall\n`);
       }
+      
+      // MARIO-STYLE GRAVITY: Fast fall for responsive feel
+      if (!canFly) {
+        const gravityMultiplier = monster.position.vy > 0 ? 1.2 : 1.0; // Fall faster than jump
+        monster.position.vy += gravity * deltaTime * gravityMultiplier;
+        monster.position.vy = Math.min(monster.position.vy, terminalVelocity);
+      }
+      
+      // Track fall for damage
+      if (!canFly && monster.position.vy > 50) {
+        if (!(monster as any).isFalling) {
+          (monster as any).isFalling = true;
+          (monster as any).fallStartY = monster.position.y;
+        }
+        (monster as any).fallHeight = monster.position.y - (monster as any).fallStartY;
+      }
+      
+      // Air control - slight air resistance
+      monster.position.vx *= airResistance;
+      
     } else if (canWallCrawl && !hasGroundSupport) {
       // WALL CRAWLING MODE - extremely difficult and tiring!
       monster.isWallCrawling = true;
@@ -1754,7 +2479,7 @@ export class GameScene extends Phaser.Scene {
       }
       
     } else {
-      // FALLING or FLYING
+      // FLYING or other special cases
       monster.isWallCrawling = false;
       monster.facingBackward = false;
       monster.position.onGround = false;
@@ -1812,18 +2537,35 @@ export class GameScene extends Phaser.Scene {
           // monster.position.vy can be anything - no terminal velocity
         }
       } else {
-        // NON-FLYING FALLING - HEAVY LEMMINGS PLUMMET!
+        // NON-FLYING FALLING - DROP LIKE A ROCK!
         const fallTime = (monster as any).fallTime || 0;
         (monster as any).fallTime = fallTime + deltaTime;
         
-        // SMOOTH gravity with air resistance
-        const fallAcceleration = 1 + fallTime * 3; // Smoother acceleration (was * 4)
-        monster.position.vy += gravity * deltaTime * fallAcceleration;
-        monster.position.vy *= airResistance; // Apply air drag for smoothness
-        monster.position.vy = Math.min(monster.position.vy, terminalVelocity * 1.8); // Smoother terminal velocity (was * 2)
+        // DOUBLE-JUMP CHECK - Mario-style mid-air recovery!
+        // Only if falling and hasn't used double-jump yet
+        if (monster.canDoubleJump && monster.position.vy > 100) {
+          // Check if there's a block ahead they're trying to reach
+          const direction = Math.sign(monster.position.vx) || 1;
+          const tileX = Math.floor(monster.position.x / TILE_SIZE);
+          const feetY = Math.floor((monster.position.y + 1) / TILE_SIZE);
+          const blockAhead = this.world[tileX + direction]?.[feetY - 1];
+          
+          // If falling toward a platform, double-jump to reach it!
+          if (blockAhead && blockAhead.type !== TileType.AIR) {
+            monster.position.vy = -400; // Strong double-jump
+            monster.canDoubleJump = false; // Used up double-jump
+            console.log(`🦘 Monster ${monster.id} DOUBLE-JUMP to reach platform!`);
+          }
+        }
         
-        // Limited air control
-        monster.position.vx *= 0.85; // Slightly more control (was 0.8)
+        // SMOOTH gravity - very gentle for floaty Mario arc
+        const fallAcceleration = 1 + fallTime * 1.8; // Very gentle acceleration
+        monster.position.vy += gravity * deltaTime * fallAcceleration * 0.7; // 70% gravity for smooth floaty arc
+        monster.position.vy *= airResistance; // Minimal air drag
+        monster.position.vy = Math.min(monster.position.vy, terminalVelocity);
+        
+        // SLOW horizontal movement in air - graceful arc
+        monster.position.vx *= 0.75; // Moderate damping - keeps forward momentum
         
         // Mark as falling for animation
         (monster as any).isFalling = true;
@@ -1832,80 +2574,200 @@ export class GameScene extends Phaser.Scene {
       }
     }
     
-    // Calculate new positions
-    const newX = monster.position.x + monster.position.vx * deltaTime;
-    const newY = monster.position.y + monster.position.vy * deltaTime;
+    // ==== MARIO-STYLE ANTICIPATORY JUMP ====
+    // MUST happen BEFORE velocity application to take effect this frame!
+    // Look ahead 1-2 tiles to jump BEFORE hitting wall (for running arc)
+    const currentFeetY = feetY; // Already calculated above
+    const currentFeetTileY = Math.floor(currentFeetY / TILE_SIZE);
+    const timeSinceLastJump = (monster as any).lastJumpTime || 0;
+    const currentTime = this.time.now;
+    const jumpCooldown = 800; // 800ms cooldown - ONE smooth jump, no spam
+    const canJump = (currentTime - timeSinceLastJump) > jumpCooldown;
+    const movingHorizontally = Math.abs(monster.position.vx) > 10;
+    const closeToGround = Math.abs(monster.position.vy) < 50;
     
-    // Normal collision detection - DON'T ignore pyramid blocks (causes sinking)
-    const collisionX = this.checkTileCollision(newX, monster.position.y);
-    const collisionY = this.checkTileCollision(monster.position.x, newY);
-    
-    // Apply horizontal velocity with collision check
-    if (!collisionX) {
-      monster.position.x = newX;
-    } else {
-      // Hit a wall - try single-block jumping first!
-      const jumpAttempted = this.tryJumpOverSingleBlock(monster, newX, monster.position.y);
+    if (canJump && (monster.position.onGround || closeToGround) && movingHorizontally) {
+      // Determine look-ahead direction
+      const lookAheadDir = monster.position.vx > 0 ? 1 : -1;
+      const lookAheadTile1 = currentTileX + lookAheadDir;
+      const lookAheadTile2 = currentTileX + (lookAheadDir * 2);
       
-      if (!jumpAttempted) {
-        // Re-declare variables for jump logic
-        const isCarrying = monster.carryingChunkId || monster.helpingCarryChunkId || monster.isClimbing;
-        const nearPyramid = Math.abs(monster.position.x - pyramidCenter) < TILE_SIZE * 15;
-        
-        // Check if monster is stuck in a hole or needs to jump (especially when carrying!)
-        const shouldAutoJump = this.isMonsterInHole(monster) || 
-            (isCarrying && this.shouldJumpTowardsHive(monster)) ||
-            (nearPyramid && monster.position.onGround) ||
-            (monster.isClimbing && monster.position.onGround); // Jump when climbing after throwing resource
-        
-        if (monster.position.onGround && shouldAutoJump) {
-          // Auto-jump to escape hole or climb towards hive when carrying
-          // SMOOTH jump forces for natural movement
-          const jumpForce = monster.isClimbing ? -900 : // Strong jump when climbing (was -950)
-                           nearPyramid && isCarrying ? -850 : // Strong for carrying up pyramid (was -900)
-                           nearPyramid ? -750 : // Pyramid jump (was -800)
-                           (isCarrying ? -620 : -570); // Normal jumps (was -650, -600)
-          monster.position.vy = jumpForce;
-          
-          // Direct toward hive center when near pyramid
-          if (nearPyramid) {
-            const hiveDir = this.colonyHive.x > monster.position.x ? 1 : -1;
-            monster.position.vx = hiveDir * 180; // Strong forward momentum (was 200)
-            // Pyramid climbing - silent
-          } else {
-            monster.position.vx = monster.position.vx > 0 ? 145 : -145; // Forward momentum (was 160)
-            // Auto-jumping - silent
+      // Check if wall exists 1-2 tiles ahead at feet level
+      let wallAhead = false;
+      let wallHeight = 0;
+      
+      for (let checkTile of [lookAheadTile1, lookAheadTile2]) {
+        if (checkTile >= 0 && checkTile < WORLD_WIDTH && currentFeetTileY >= 0 && currentFeetTileY < WORLD_HEIGHT) {
+          const tile = this.world[checkTile][currentFeetTileY];
+          if (tile && TILE_PROPERTIES[tile.type].solid) {
+            wallAhead = true;
+            // Check if there's ground on top of wall (1 block up)
+            if (currentFeetTileY - 1 >= 0) {
+              const tileAbove = this.world[checkTile][currentFeetTileY - 1];
+              if (!tileAbove || !TILE_PROPERTIES[tileAbove.type].solid) {
+                wallHeight = 1; // Can jump up one block
+              }
+            }
+            break;
           }
-        } else {
-          // Only mine if monster has EXPLICIT mining task from player pheromone
-          // AND is actively trying to reach a mining target
-          if (monster.currentTask && 
-              monster.currentTask.type === MonsterAction.MINE_NEARBY && 
-              monster.currentTask.userGenerated &&
-              monster.miningTarget) {
-            // Only mine horizontally when directed
-            this.tryMineBlock(monster, newX, monster.position.y, 'horizontal');
-          }
-          monster.position.vx = 0;
+        }
+      }
+      
+      // ANTICIPATORY JUMP: Jump before hitting wall to arc over it
+      if (wallAhead && wallHeight === 1) {
+        const jumpPower = -680; // HUGE smooth Mario jump - 3 blocks high
+        monster.position.vy = jumpPower;
+        monster.position.onGround = false;
+        monster.hasJumped = true;
+        (monster as any).lastJumpTime = currentTime;
+        (monster as any).justJumpedThisFrame = true;
+        if (debugThis) {
+          console.log(`      🏃 ANTICIPATORY JUMP! Detected wall ${lookAheadTile1}, jumping early with arc!`);
         }
       }
     }
     
-    if (!collisionY) {
-      monster.position.y = newY;
-    } else {
-      // Hit floor/ceiling - NEVER mine downward unless explicitly directed
-      if (monster.currentTask && 
-          monster.currentTask.type === MonsterAction.MINE_NEARBY && 
-          monster.currentTask.userGenerated &&
-          monster.miningTarget &&
-          monster.miningTarget.direction === 'down' &&
-          newY > monster.position.y) { // Only if moving downward
-        // Only mine down if explicitly directed to mine down
-        this.tryMineBlock(monster, monster.position.x, newY, 'down');
-      }
-      monster.position.vy = 0;
+    // ====== APPLY VELOCITY TO POSITION WITH COLLISION ======
+    // CRITICAL: Use FEET position for collision, not center!
+    
+    if (debugThis) {
+      console.log(`   📏 COLLISION CHECK:`);
+      console.log(`      Center: (${monster.position.x.toFixed(1)}, ${monster.position.y.toFixed(1)})`);
+      console.log(`      Feet Y: ${currentFeetY.toFixed(1)} (tile ${currentFeetTileY})`);
+      console.log(`      Sprite size: ${monsterWidth.toFixed(1)}x${monsterHeight.toFixed(1)} (real bounds)`);
     }
+    
+    // Calculate new position
+    const newX = monster.position.x + monster.position.vx * deltaTime;
+    const newY = monster.position.y + monster.position.vy * deltaTime;
+    const newFeetY = newY + halfHeight;
+    
+    // Check if new position would be inside a solid block
+    const newTileX = Math.floor(newX / TILE_SIZE);
+    const newFeetTileY = Math.floor(newFeetY / TILE_SIZE);
+    const collisionTileX = Math.floor(monster.position.x / TILE_SIZE);
+    
+    let canMoveX = true;
+    let canMoveY = true;
+    
+    // Check horizontal movement at FEET level
+    if (newTileX >= 0 && newTileX < WORLD_WIDTH && currentFeetTileY >= 0 && currentFeetTileY < WORLD_HEIGHT) {
+      const tileAtNewX = this.world[newTileX][currentFeetTileY];
+      if (tileAtNewX && TILE_PROPERTIES[tileAtNewX.type].solid) {
+        canMoveX = false;
+        monster.position.vx = 0; // Stop horizontal velocity
+        
+        // FALLBACK JUMP: If anticipation failed, jump when blocked
+        if (canJump && (monster.position.onGround || closeToGround)) {
+          const jumpPower = -680; // HUGE smooth Mario jump - 3 blocks high
+          monster.position.vy = jumpPower;
+          monster.position.onGround = false;
+          monster.hasJumped = true;
+          (monster as any).lastJumpTime = currentTime;
+          (monster as any).justJumpedThisFrame = true;
+          if (debugThis) {
+            console.log(`      🦘 FALLBACK JUMP! Blocked at wall, jumping up!`);
+          }
+        }
+        
+        if (debugThis) {
+          console.log(`      ❌ BLOCKED X: tile [${newTileX}, ${currentFeetTileY}] is ${tileAtNewX.type}`);
+        }
+      }
+    }
+    
+    // Check vertical movement at current X
+    if (collisionTileX >= 0 && collisionTileX < WORLD_WIDTH && newFeetTileY >= 0 && newFeetTileY < WORLD_HEIGHT) {
+      const tileAtNewY = this.world[collisionTileX][newFeetTileY];
+      if (tileAtNewY && TILE_PROPERTIES[tileAtNewY.type].solid) {
+        canMoveY = false;
+        monster.position.vy = 0; // Stop vertical velocity
+        if (debugThis) {
+          console.log(`      ❌ BLOCKED Y: tile [${collisionTileX}, ${newFeetTileY}] is ${tileAtNewY.type}`);
+        }
+      }
+    }
+    
+    // Apply movement only if not blocked
+    if (canMoveX) {
+      monster.position.x = newX;
+    }
+    if (canMoveY) {
+      monster.position.y = newY;
+    }
+    
+    if (debugThis && (!canMoveX || !canMoveY)) {
+      console.log(`      ✅ Movement applied: X=${canMoveX}, Y=${canMoveY}`);
+    }
+    
+    // ====== ANOMALY DETECTION & AFTER-STATE LOGGING ======
+    debugState.frameCount++;
+    
+    // Check if monster is inside a block
+    const afterMonsterTileX = Math.floor(monster.position.x / TILE_SIZE);
+    const afterMonsterTileY = Math.floor(monster.position.y / TILE_SIZE);
+    let insideBlock = false;
+    let blockType = 'none';
+    
+    if (afterMonsterTileX >= 0 && afterMonsterTileX < WORLD_WIDTH && 
+        afterMonsterTileY >= 0 && afterMonsterTileY < WORLD_HEIGHT) {
+      const currentTile = this.world[afterMonsterTileX][afterMonsterTileY];
+      if (currentTile && TILE_PROPERTIES[currentTile.type].solid) {
+        insideBlock = true;
+        blockType = currentTile.type;
+      }
+    }
+    
+    // Check if walking on air (onGround but no solid below)
+    // CRITICAL: Check below FEET position, not center!
+    let walkingOnAir = false;
+    if (monster.position.onGround) {
+      const afterFeetY = monster.position.y + (monsterHeight / 2);
+      const feetTileY = Math.floor(afterFeetY / TILE_SIZE);
+      const belowTileY = feetTileY + 1;
+      if (belowTileY < WORLD_HEIGHT) {
+        const tileBelow = this.world[afterMonsterTileX][belowTileY];
+        if (!tileBelow || !TILE_PROPERTIES[tileBelow.type].solid) {
+          walkingOnAir = true;
+        }
+      }
+    }
+    
+    // ANOMALY DETECTION: Log significant issues
+    const hasAnomaly = insideBlock || walkingOnAir || 
+                       (Math.abs(monster.position.y - beforePos.y) > 10 && debugState.frameCount > 10);
+    
+    if (hasAnomaly || debugThis) {
+      const posChange = {
+        x: (monster.position.x - beforePos.x).toFixed(1),
+        y: (monster.position.y - beforePos.y).toFixed(1)
+      };
+      
+      console.log(`\n🐛 MONSTER ANOMALY: ${monster.id.substring(0, 20)}`);
+      console.log(`   📍 BEFORE: (${beforePos.x.toFixed(1)}, ${beforePos.y.toFixed(1)}) tile [${Math.floor(beforePos.x/TILE_SIZE)}, ${Math.floor(beforePos.y/TILE_SIZE)}]`);
+      console.log(`   📍 AFTER:  (${monster.position.x.toFixed(1)}, ${monster.position.y.toFixed(1)}) tile [${afterMonsterTileX}, ${afterMonsterTileY}]`);
+      console.log(`   📏 DELTA: (${posChange.x}, ${posChange.y})`);
+      console.log(`   🎮 STATE: onGround ${beforeOnGround} → ${monster.position.onGround}`);
+      console.log(`   ⚡ VELOCITY: (${monster.position.vx.toFixed(1)}, ${monster.position.vy.toFixed(1)})`);
+      
+      if (insideBlock) {
+        console.log(`   🚨 INSIDE BLOCK: ${blockType} at tile [${afterMonsterTileX}, ${afterMonsterTileY}]`);
+      }
+      if (walkingOnAir) {
+        console.log(`   🌊 WALKING ON AIR: onGround=true but no solid below!`);
+      }
+      if (Math.abs(parseFloat(posChange.y)) > 10) {
+        console.log(`   ⚡ LARGE Y JUMP: Moved ${posChange.y}px in one frame!`);
+      }
+      console.log('');
+    }
+    
+    // Update debug state for next frame
+    debugState.lastPos = { x: monster.position.x, y: monster.position.y };
+    debugState.lastState = { onGround: monster.position.onGround, insideBlock };
+    
+    // Clear jump flag at end of frame
+    (monster as any).justJumpedThisFrame = false;
   }
   
   /**
@@ -1923,7 +2785,10 @@ export class GameScene extends Phaser.Scene {
     // Check for blocks directly ahead
     const tileX = Math.floor(monster.position.x / TILE_SIZE);
     const tileY = Math.floor(monster.position.y / TILE_SIZE);
-    const feetY = Math.floor((monster.position.y + 8) / TILE_SIZE); // Monster feet position
+    
+    // Use same feet offset as ground detection (monster position IS feet position)
+    const feetOffset = 0;
+    const feetY = Math.floor((monster.position.y + feetOffset) / TILE_SIZE); // Monster feet position
     const direction = monster.position.vx !== 0 ? Math.sign(monster.position.vx) : 
                       (this.colonyHive.x > monster.position.x ? 1 : -1);
     
@@ -1993,43 +2858,11 @@ export class GameScene extends Phaser.Scene {
         }, 300); // Fail after 300ms of trying
       }
     }
-    // CAN CLIMB 2 BLOCKS!
-    else if (wallHeight === 2 && (!blockAhead3 || blockAhead3.type === TileType.AIR)) {
-      // 2-block climbing - ENHANCED
-      const targetY = (feetY - 2) * TILE_SIZE; // Top of 2 blocks
-      const currentY = monster.position.y;
-      
-      if (currentY > targetY - 8) {
-        // Fast climbing for 2 blocks
-        const climbSpeed = 3; // Faster for 2-block climb
-        
-        monster.position.y -= climbSpeed;
-        monster.position.x += direction * 0.8; // Move forward while climbing
-        monster.position.vy = -150; // Strong upward velocity
-        monster.position.vx = direction * 40;
-        monster.position.onGround = true;
-        
-        if (Math.random() < 0.15) {
-          console.log(`Monster ${monster.id} climbing 2-block wall!`);
-        }
-      }
-    }
-    // CAN CLIMB 1 BLOCK (original pyramid climbing)
-    else if (wallHeight === 1 && (!blockAhead2 || blockAhead2.type === TileType.AIR)) {
-      // 1-block climbing - smooth as before
-      const targetY = (feetY - 1) * TILE_SIZE;
-      const currentY = monster.position.y;
-      
-      if (currentY > targetY - 8) {
-        const distanceToTarget = currentY - (targetY - 8);
-        const climbSpeed = Math.min(1.5, distanceToTarget * 0.15);
-        
-        monster.position.y -= climbSpeed;
-        monster.position.x += direction * 0.5;
-        monster.position.vy = -50 - (climbSpeed * 20);
-        monster.position.vx = direction * 30;
-        monster.position.onGround = true;
-      }
+    // DISABLE AUTO-CLIMB - Let tryJumpOverSingleBlock handle it instead
+    // This was causing conflicts with the jump system
+    else if (wallHeight >= 1 && wallHeight <= 2) {
+      // Do nothing - let the main jump system handle it
+      // This prevents double-triggering and velocity cancellation
     }
     // If stuck inside a block, push out
     else if (this.world[tileX]?.[feetY] && this.world[tileX][feetY].type !== TileType.AIR) {
@@ -2278,24 +3111,45 @@ export class GameScene extends Phaser.Scene {
    * Try to jump over a single block if possible
    */
   private tryJumpOverSingleBlock(monster: Monster, targetX: number, targetY: number): boolean {
+    
     // Always allow jumping when carrying resources to hive!
     const isCarrying = monster.carryingChunkId || monster.helpingCarryChunkId;
     
-    // Only check ground and energy if NOT carrying (carriers always jump)
-    if (!isCarrying) {
-      if (!monster.position.onGround || monster.energy < 10) {
-        return false;
-      }
-    } else if (!monster.position.onGround) {
-      return false; // Still need to be on ground even when carrying
+    // MARIO-STYLE: Simple anti-spam check
+    const isJumpingUp = monster.position.vy < -30; // Moving up fast
+    const lastJumpTime = monster.lastJumpTime || 0;
+    const timeSinceJump = Date.now() - lastJumpTime;
+    
+    // Block if actively jumping up OR just jumped very recently (prevents spam)
+    if (isJumpingUp) {
+      return false; // Don't interrupt existing upward jump
+    }
+    
+    // Prevent jump spam: minimum 200ms between jumps
+    if (timeSinceJump < 200) {
+      return false; // Too soon after last jump
+    }
+    
+    // Clear jump flag when attempting new jump
+    (monster as any).justJumped = false;
+    
+    // Check energy
+    if (!isCarrying && monster.energy < 10) {
+      return false;
     }
 
-    const direction = targetX > monster.position.x ? 1 : -1;
+    // If no valid target (stuck), use direction of movement velocity
+    const hasValidTarget = Math.abs(targetX - monster.position.x) > TILE_SIZE * 0.5;
+    const direction = hasValidTarget ? 
+      (targetX > monster.position.x ? 1 : -1) : 
+      (monster.position.vx >= 0 ? 1 : -1); // Use velocity direction as fallback
+    
     const monsterTileX = Math.floor(monster.position.x / TILE_SIZE);
     const monsterTileY = Math.floor(monster.position.y / TILE_SIZE);
     
-    // Check multiple blocks ahead for better pathfinding
-    const checkDistances = isCarrying ? [0.6, 1.0, 1.5] : [0.6]; // Check further when carrying
+    // MARIO-STYLE: Check multiple distances - close AND far!
+    // Include VERY close detection for when stuck against wall
+    const checkDistances = [0.3, 0.6, 1.0, 1.5]; // 0.3 = right at wall!
     
     for (const checkDist of checkDistances) {
       const targetTileX = Math.floor((monster.position.x + direction * TILE_SIZE * checkDist) / TILE_SIZE);
@@ -2314,29 +3168,65 @@ export class GameScene extends Phaser.Scene {
           
           // Check if the space above the block is free
           const aboveTileY = targetTileY - 1;
+          const aboveTileY2 = targetTileY - 2; // Check 2nd block up too
+          const aboveTileY3 = targetTileY - 3; // Even higher for big jumps!
+          
           if (aboveTileY >= 0) {
             const tileAbove = this.world[targetTileX][aboveTileY];
-            if (!TILE_PROPERTIES[tileAbove.type].solid) {
-              // Space above is clear - JUMP!
+            const tileAbove2 = aboveTileY2 >= 0 ? this.world[targetTileX][aboveTileY2] : null;
+            const tileAbove3 = aboveTileY3 >= 0 ? this.world[targetTileX][aboveTileY3] : null;
+            
+            // Need clearance - at least 1 block, preferably 2-3 for big jumps
+            const hasClearance = !TILE_PROPERTIES[tileAbove.type].solid &&
+                                (!tileAbove2 || !TILE_PROPERTIES[tileAbove2.type].solid) &&
+                                (!tileAbove3 || !TILE_PROPERTIES[tileAbove3.type].solid);
+            
+            if (hasClearance) {
+              // Space above is clear - ALWAYS ALLOW JUMP (no cooldown for obstacle clearing)
+              const currentTime = this.time.now;
+              monster.lastJumpTime = currentTime;
+              
+              // MARIO-STYLE SMART JUMP - Always clears obstacles!
+              const currentFeetTileY = Math.floor((monster.position.y + 1) / TILE_SIZE);
+              const jumpHeight = Math.max(currentFeetTileY - targetTileY, 2); // Always jump at least 2 blocks!
+              
+              // SUPER JUMP POWER - guaranteed to clear 2 blocks minimum
+              const GRAVITY = 800;
+              const pixelHeight = jumpHeight * TILE_SIZE + 16; // Extra clearance
+              const baseVelocity = -Math.sqrt(2 * GRAVITY * pixelHeight) * 2.0; // 100% EXTRA POWER!
+              
+              // ULTRA JUMP - Guaranteed to clear obstacles!
+              const jumpPower = Math.min(baseVelocity, -600); // Minimum -600!
+              monster.position.vy = jumpPower;
+              
               if (isPyramidStep) {
-                // VERY strong jump for pyramid climbing - must clear full blocks!
-                monster.position.vy = -470; // Smoother jump force (was -500)
-                monster.position.vx = direction * 110; // Good forward momentum
-                monster.energy -= 0.5; // Minimal energy cost for pyramid
-                console.log(`Monster ${monster.id} PYRAMID STEP - powerful jump at (${targetTileX}, ${targetTileY})`);
+                // MEGA power for pyramid steps
+                monster.position.vx = direction * 180;
+                monster.energy -= 0.5;
               } else if (isCarrying) {
-                // Strong jump when carrying resources
-                monster.position.vy = -450; // Smoother jump for carrying (was -475)
-                monster.position.vx = direction * 95; // Good momentum when carrying
-                monster.energy -= 0; // Free energy when carrying to hive!
-                console.log(`Monster ${monster.id} CARRYING - jumping at (${targetTileX}, ${targetTileY})`);
+                // Full power when carrying
+                monster.position.vx = direction * 150;
+                monster.energy -= 0;
               } else {
-                // Normal jump for regular obstacles
-                monster.position.vy = -425; // Smoother jump force (was -450)
-                monster.position.vx = direction * 65; // Normal forward momentum
-                monster.energy -= 2; // Normal energy cost
-                console.log(`Monster ${monster.id} jumping over block at (${targetTileX}, ${targetTileY})`);
+                // Normal jump
+                monster.position.vx = direction * 130;
+                monster.energy -= 1;
               }
+              
+              // Enable double-jump and mark jump time
+              monster.hasJumped = true;
+              monster.canDoubleJump = true;
+              monster.position.onGround = false;
+              monster.lastJumpTime = Date.now(); // Track when jump started
+              
+              // CRITICAL: Mark that we JUST jumped this frame - prevent immediate re-grounding
+              (monster as any).justJumped = true;
+              
+              // MASSIVE INSTANT BOOST - Immediately lift them up!
+              // This creates the initial jump arc
+              monster.position.y -= 24; // HUGE instant 24px boost!
+              monster.position.x += direction * 12; // Forward momentum
+              
               return true;
             }
           }
@@ -2438,7 +3328,7 @@ export class GameScene extends Phaser.Scene {
    */
   private checkForWallCrawling(monster: Monster, tileX: number, tileY: number): boolean {
     // Flying creatures NEVER need to wall crawl!
-    const canFly = monster.sprite && (monster.sprite as any).movementType === 'fly';
+    const canFly = this.ragdollPhysics.hasWings(monster.id);
     if (canFly) {
       return false;
     }

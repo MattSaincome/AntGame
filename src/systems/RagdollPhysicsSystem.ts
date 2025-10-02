@@ -22,6 +22,10 @@ interface Limb {
   length: number;
   isGrounded?: boolean;
   isGrabbing?: boolean;
+  // NEW: For proper rotation-based leg animation
+  rotation: number; // Current rotation angle from hip
+  targetRotation: number; // Target rotation angle
+  rotationVelocity: number; // Rotation velocity for smooth transitions
 }
 
 interface RagdollState {
@@ -58,9 +62,12 @@ export class RagdollPhysicsSystem {
   private readonly ARM_SPRING = 0.03; // EXTRA slow for arms specifically
   private readonly ARM_DAMPING = 0.92; // Extra damping for arms
   private readonly ARM_MAX_VELOCITY = 1.5; // Arms move even slower than legs
-  private readonly STEP_HEIGHT = 8; // How high feet lift when stepping (was 15) - human-like
-  private readonly STEP_DISTANCE = 18; // How far forward feet step (was 25) - smaller steps
-  private readonly STEP_DURATION = 500; // ms per step (was 400) - slower, more human
+  // LEG ANIMATION CONSTANTS - Redesigned for realistic 2D side-scroller movement
+  private readonly LEG_SWING_ANGLE = 27.5; // Degrees of leg swing - 10% more exaggerated (was 25)
+  private readonly STEP_CYCLE_DURATION = 600; // ms per full step cycle
+  private readonly LEG_ROTATION_SPEED = 0.15; // How fast legs rotate to target angle
+  private readonly JUMP_SQUAT_ANGLE = 45; // Degrees legs bend during jump squat
+  private readonly CLIMB_STEP_ANGLE = 60; // Degrees for climbing large steps
   private readonly GRAB_DISTANCE = 40; // Max distance for hand grabbing
   private readonly IK_ITERATIONS = 3; // Iterations for IK solver
   private readonly MIN_MOVEMENT_THRESHOLD = 0.5; // Prevent micro-jittering
@@ -68,6 +75,22 @@ export class RagdollPhysicsSystem {
   
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+  }
+  
+  /**
+   * Check if a monster has legs (used to determine walk vs fly animation)
+   */
+  public hasLegs(monsterId: string): boolean {
+    const state = this.ragdollStates.get(monsterId);
+    return !!(state && (state.leftLeg || state.rightLeg));
+  }
+  
+  /**
+   * Check if a monster has wings (flying monsters)
+   */
+  public hasWings(monsterId: string): boolean {
+    const state = this.ragdollStates.get(monsterId);
+    return !!(state && (state.leftWing || state.rightWing));
   }
   
   /**
@@ -114,6 +137,14 @@ export class RagdollPhysicsSystem {
     console.log(`  Leg rest positions: L(${leftLegRest.x}, ${leftLegRest.y}), R(${rightLegRest.x}, ${rightLegRest.y})`);
     console.log(`  Arm rest positions: L(${leftArmRest.x}, ${leftArmRest.y}), R(${rightArmRest.x}, ${rightArmRest.y})`);
     
+    // Store head's INITIAL position for animations
+    const headX = head ? (head as any).x : 0;
+    const headY = head ? (head as any).y : 0;
+    
+    if (head) {
+      console.log(`📍 Head initialized at (${headX}, ${headY}) for ${monsterId}`);
+    }
+    
     const state: RagdollState = {
       leftLeg: leftLeg ? this.createLimb(leftLeg, leftLegRest.x, leftLegRest.y) : null,
       rightLeg: rightLeg ? this.createLimb(rightLeg, rightLegRest.x, rightLegRest.y) : null,
@@ -123,8 +154,8 @@ export class RagdollPhysicsSystem {
       rightWing,
       body,
       head,
-      headOriginalX: (head as any)?.x ?? 0,
-      headOriginalY: (head as any)?.y ?? 0,
+      headOriginalX: headX,
+      headOriginalY: headY,
       stepTimer: 0,
       currentStep: 'left',
       centerX,
@@ -145,9 +176,9 @@ export class RagdollPhysicsSystem {
     body: Phaser.GameObjects.Sprite | null
   ): { x: number; y: number } {
     if (!limb) {
-      // Default fallback positions
+      // Default fallback positions - 10% closer together
       if (type === 'leg') {
-        return { x: side === 'left' ? -8 : 8, y: 30 };
+        return { x: side === 'left' ? -7.2 : 7.2, y: 30 }; // 10% closer (was -8/8)
       } else {
         return { x: side === 'left' ? -12 : 12, y: 5 };
       }
@@ -159,8 +190,8 @@ export class RagdollPhysicsSystem {
     
     // Legs should be positioned DIRECTLY UNDER the monster (narrow stance)
     if (type === 'leg') {
-      // Clamp X to be very close to center (max 12 units from center)
-      const clampedX = Math.max(-12, Math.min(12, currentX || (side === 'left' ? -8 : 8)));
+      // Clamp X to be very close to center - 10% closer together
+      const clampedX = Math.max(-10.8, Math.min(10.8, currentX || (side === 'left' ? -7.2 : 7.2))); // 10% closer (was -12/12)
       
       return {
         x: clampedX,
@@ -211,7 +242,11 @@ export class RagdollPhysicsSystem {
       restY,
       length: sprite.height || 30,
       isGrounded: false,
-      isGrabbing: false
+      isGrabbing: false,
+      // Initialize rotation properties
+      rotation: 0,
+      targetRotation: 0,
+      rotationVelocity: 0
     };
   }
   
@@ -237,57 +272,55 @@ export class RagdollPhysicsSystem {
     // LEGS - Use universal walking system!
     this.updateLegWalking(state, velocityX, deltaTime);
     
-    // Arms sway GENTLY and casually while walking - subtle vertical motion
+    // Arms sway naturally while walking - more visible movement
     if (state.leftArm && state.rightArm) {
-      // ONLY swing if not grabbing/carrying
-      if (!state.leftArm.isGrabbing && !state.rightArm.isGrabbing) {
-        // VERY gentle, slow sway (slower than legs for casual look)
-        const swingCycle = (state.stepTimer / this.STEP_DURATION) * Math.PI * 0.5; // Quarter speed of legs
-        const armSwayAmount = Math.sin(swingCycle) * 5; // Only 5 units - very subtle!
-        
-        // Arms stay pinned to sides, sway very slightly forward/back
-        state.leftArm.targetX = state.leftArm.restX; // Pinned to side
-        state.leftArm.targetY = state.leftArm.restY + armSwayAmount; // Subtle sway
-        
-        state.rightArm.targetX = state.rightArm.restX; // Pinned to side
-        state.rightArm.targetY = state.rightArm.restY - armSwayAmount; // Opposite sway
-        
-        this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-        this.applySpringPhysics(state.rightArm, deltaTime, true);
-        this.applyIK(state.leftArm, 0, 0);
-        this.applyIK(state.rightArm, 0, 0);
-      } else {
-        // Still apply physics even when grabbing to prevent stuck arms
-        this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-        this.applySpringPhysics(state.rightArm, deltaTime, true);
-        this.applyIK(state.leftArm, 0, 0);
-        this.applyIK(state.rightArm, 0, 0);
-      }
+      // Gentle sway - 8 pixels of movement (more visible)
+      const swingCycle = (state.stepTimer / this.STEP_CYCLE_DURATION) * Math.PI;
+      const armSway = Math.sin(swingCycle) * 8; // 8 pixels - visible but natural!
+      
+      // Arms hang down and sway forward/back
+      state.leftArm.sprite.x = state.leftArm.restX;
+      state.leftArm.sprite.y = state.leftArm.restY + armSway;
+      
+      state.rightArm.sprite.x = state.rightArm.restX;
+      state.rightArm.sprite.y = state.rightArm.restY - armSway; // Opposite direction
     }
     
     // Body breathing animation (always active)
     const breatheCycle = Date.now() * 0.0012; // Slower breathing (was 0.0015)
     const breatheScale = 1.0 + Math.sin(breatheCycle) * 0.04; // 4% scale change - MORE VISIBLE (was 0.02)
     
+    // Calculate body bob offset (used by both body and head)
+    const bobOffset = Math.abs(Math.sin(state.stepTimer / this.STEP_CYCLE_DURATION * Math.PI * 2)) * 5; // Increased to 5 (was 3)
+    
     if (state.body) {
-      // Walking bob + breathing
-      const bobOffset = Math.abs(Math.sin(state.stepTimer / this.STEP_DURATION * Math.PI * 2)) * 3;
+      // Walking bob + breathing - MORE VISIBLE
       state.body.y = -bobOffset;
       state.body.setScale(breatheScale); // Breathing animation
+      
+      // EXTREMELY SUBTLE body sway/lean during walking
+      const swayCycle = (state.stepTimer / this.STEP_CYCLE_DURATION) * Math.PI * 2;
+      const swayAngle = Math.sin(swayCycle) * 0.015; // Only ±0.015 radians (±0.86°) - very natural
+      state.body.rotation = swayAngle;
     }
     
-    // Head ALWAYS bobs during walk (removed speed threshold)
+    // Head ALWAYS bobs during walk AND follows body rotation
     if (state.head) {
-      // Visible bob up and down in sync with steps
-      const headBobCycle = (state.stepTimer / this.STEP_DURATION) * Math.PI;
-      const headBobOffset = Math.sin(headBobCycle) * 4; // 4 units up/down - very visible!
+      // Visible bob up and down in sync with steps - INCREASED visibility
+      const headBobCycle = (state.stepTimer / this.STEP_CYCLE_DURATION) * Math.PI;
+      const headBobOffset = Math.sin(headBobCycle) * 6; // INCREASED to 6 units (was 4)
       
       // Subtle side-to-side sway
       const headSwayOffset = Math.sin(headBobCycle * 0.5) * 2; // 2 unit sway
       
       // CRITICAL: Add bob offset to ORIGINAL position, don't replace it!
-      state.head.y = state.headOriginalY + headBobOffset;
-      state.head.x = state.headOriginalX + headSwayOffset;
+      (state.head as any).y = state.headOriginalY + headBobOffset - bobOffset; // Follow body bob!
+      (state.head as any).x = state.headOriginalX + headSwayOffset;
+      
+      // HEAD MUST FOLLOW BODY ROTATION (connected to body)
+      if (state.body) {
+        (state.head as any).rotation = state.body.rotation; // Head rotates with body sway
+      }
       
       // All facial features (eyes, mouth, etc.) are children of head
       // They automatically move with the head, no extra work needed!
@@ -320,21 +353,21 @@ export class RagdollPhysicsSystem {
     const hasArms = state.leftArm || state.rightArm;
     
     if (hasArms) {
-      // Use arms to hold resource
+      // Arms MUST reach out and TOUCH the resource - visible grip!
+      // Position arms at the sides of the resource block
+      const resourceWidth = 16; // Standard resource block width
+      const gripOffset = resourceWidth / 2 + 5; // Reach to sides + 5 pixels overlap
+      
       if (state.leftArm) {
-        state.leftArm.targetX = relativeX - 10; // Left side of block
-        state.leftArm.targetY = relativeY;
-        state.leftArm.isGrabbing = true; // Mark as grabbing
-        this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-        this.applyIK(state.leftArm, 0, 0);
+        // Left arm reaches to LEFT side of resource
+        state.leftArm.sprite.x = relativeX - gripOffset;
+        state.leftArm.sprite.y = relativeY; // At resource height
       }
       
       if (state.rightArm) {
-        state.rightArm.targetX = relativeX + 10; // Right side of block
-        state.rightArm.targetY = relativeY;
-        state.rightArm.isGrabbing = true; // Mark as grabbing
-        this.applySpringPhysics(state.rightArm, deltaTime, true); // isArm=true for slow movement
-        this.applyIK(state.rightArm, 0, 0);
+        // Right arm reaches to RIGHT side of resource
+        state.rightArm.sprite.x = relativeX + gripOffset;
+        state.rightArm.sprite.y = relativeY; // At resource height
       }
     } else {
       // NO ARMS - use mouth/head to carry!
@@ -370,63 +403,70 @@ export class RagdollPhysicsSystem {
   }
   
   /**
-   * UNIVERSAL leg walking animation - NATURAL walking motion
+   * NEW REALISTIC LEG WALKING ANIMATION
+   * Legs rotate from hip joint like pendulums - proper 2D side-scroller style
+   * Research-based: Mimics classic 2D platformer leg animation (Mario, Sonic, Celeste style)
    */
   private updateLegWalking(state: RagdollState, velocityX: number, deltaTime: number): void {
     if (!state.leftLeg || !state.rightLeg) return;
     
-    const isMovingHorizontally = Math.abs(velocityX) > 20; // Moving left/right
+    const isMovingHorizontally = Math.abs(velocityX) > 5; // Lowered from 20 for smoother animation start
     
     if (isMovingHorizontally) {
-      // Update step cycle
+      // Step cycle timing - smooth sine wave for pendulum motion
       state.stepTimer += deltaTime * 1000;
-      if (state.stepTimer >= this.STEP_DURATION) {
+      if (state.stepTimer >= this.STEP_CYCLE_DURATION) {
         state.stepTimer = 0;
-        state.currentStep = state.currentStep === 'left' ? 'right' : 'left';
       }
       
-      const stepProgress = state.stepTimer / this.STEP_DURATION;
-      const steppingLeg = state.currentStep === 'left' ? state.leftLeg : state.rightLeg;
-      const plantedLeg = state.currentStep === 'left' ? state.rightLeg : state.leftLeg;
+      // Calculate pendulum swing angles for each leg
+      // Like a metronome - opposite legs swing opposite directions
+      const cycleProgress = state.stepTimer / this.STEP_CYCLE_DURATION;
+      const swingAngle = Math.sin(cycleProgress * Math.PI * 2); // -1 to 1 smooth wave
       
-      // Stepping leg - SUBTLE, NATURAL walking arc
-      if (steppingLeg) {
-        // Smoother step arc - ease in/out
-        const easeProgress = stepProgress < 0.5 
-          ? 2 * stepProgress * stepProgress 
-          : 1 - Math.pow(-2 * stepProgress + 2, 2) / 2;
-        
-        const stepArc = Math.sin(easeProgress * Math.PI) * 6; // Human-like lift (was 9)
-        const stepForward = easeProgress * 8; // Small forward step (was 12)
-        
-        steppingLeg.targetX = steppingLeg.restX + stepForward - 4; // Center the motion
-        steppingLeg.targetY = steppingLeg.restY - stepArc;
-        steppingLeg.isGrounded = stepProgress > 0.75; // Earlier ground contact
-      }
+      // LEFT LEG swings forward when RIGHT swings back (opposite phase)
+      const leftLegAngle = swingAngle * this.LEG_SWING_ANGLE; // -27.5 to +27.5 degrees (10% more)
+      const rightLegAngle = -swingAngle * this.LEG_SWING_ANGLE; // Opposite direction
       
-      // Planted leg - stays firmly planted with minimal shift
-      if (plantedLeg) {
-        const backShift = stepProgress * -4; // Minimal backward slide (was -6)
-        plantedLeg.targetX = plantedLeg.restX + backShift;
-        plantedLeg.targetY = plantedLeg.restY; // Always on ground
-        plantedLeg.isGrounded = true;
-      }
+      // Apply rotation smoothly
+      state.leftLeg.targetRotation = leftLegAngle * (Math.PI / 180); // Convert to radians
+      state.rightLeg.targetRotation = rightLegAngle * (Math.PI / 180);
       
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
-      this.applyIK(state.rightLeg, 0, 0);
+      // Smooth rotation interpolation
+      this.smoothRotateToTarget(state.leftLeg, deltaTime);
+      this.smoothRotateToTarget(state.rightLeg, deltaTime);
+      
+      // Apply the rotation to the sprite (pivots from hip/top of sprite)
+      state.leftLeg.sprite.rotation = state.leftLeg.rotation;
+      state.rightLeg.sprite.rotation = state.rightLeg.rotation;
+      
     } else {
-      // Not moving - rest position
-      state.leftLeg.targetX = state.leftLeg.restX;
-      state.leftLeg.targetY = state.leftLeg.restY;
-      state.rightLeg.targetX = state.rightLeg.restX;
-      state.rightLeg.targetY = state.rightLeg.restY;
+      // IDLE - legs hang straight down (0 rotation)
+      state.leftLeg.targetRotation = 0;
+      state.rightLeg.targetRotation = 0;
       
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
-      this.applyIK(state.rightLeg, 0, 0);
+      this.smoothRotateToTarget(state.leftLeg, deltaTime);
+      this.smoothRotateToTarget(state.rightLeg, deltaTime);
+      
+      state.leftLeg.sprite.rotation = state.leftLeg.rotation;
+      state.rightLeg.sprite.rotation = state.rightLeg.rotation;
+    }
+  }
+  
+  /**
+   * Smooth rotation interpolation for natural leg movement
+   */
+  private smoothRotateToTarget(limb: Limb, deltaTime: number): void {
+    const rotationDiff = limb.targetRotation - limb.rotation;
+    
+    // Apply rotation velocity
+    limb.rotationVelocity = rotationDiff * this.LEG_ROTATION_SPEED;
+    limb.rotation += limb.rotationVelocity;
+    
+    // Snap to target if very close
+    if (Math.abs(rotationDiff) < 0.01) {
+      limb.rotation = limb.targetRotation;
+      limb.rotationVelocity = 0;
     }
   }
   
@@ -448,94 +488,47 @@ export class RagdollPhysicsSystem {
     // LEGS ALWAYS WALK when moving horizontally
     this.updateLegWalking(state, velocityX, deltaTime);
     
-    // Hands reach for blocks
+    // Arms hang down naturally during climbing - SIMPLE
     if (state.leftArm && state.rightArm) {
-      if (isReaching) {
-        // Alternate hand reaching
-        const reachingArm = state.currentStep === 'left' ? state.leftArm : state.rightArm;
-        const otherArm = state.currentStep === 'left' ? state.rightArm : state.leftArm;
-        
-        // Reaching hand goes to block (convert world coords to container-relative)
-        const relativeX = blockX - (container.x + state.centerX);
-        const relativeY = blockY - (container.y + state.centerY);
-        
-        if (Math.abs(relativeX) < this.GRAB_DISTANCE && Math.abs(relativeY) < this.GRAB_DISTANCE) {
-          reachingArm.targetX = relativeX;
-          reachingArm.targetY = relativeY;
-          reachingArm.isGrabbing = true;
-          
-          // Check if hand reached block
-          const dist = Math.hypot(reachingArm.currentX - relativeX, reachingArm.currentY - relativeY);
-          if (dist < 5) {
-            // Switch to other hand
-            state.stepTimer = 0;
-            state.currentStep = state.currentStep === 'left' ? 'right' : 'left';
-          }
-        }
-        
-        // Other hand stays at rest
-        otherArm.targetX = otherArm.restX;
-        otherArm.targetY = otherArm.restY;
-        otherArm.isGrabbing = false;
-      } else {
-        // Not reaching - return to rest
-        state.leftArm.targetX = state.leftArm.restX;
-        state.leftArm.targetY = state.leftArm.restY;
-        state.leftArm.isGrabbing = false;
-        state.rightArm.targetX = state.rightArm.restX;
-        state.rightArm.targetY = state.rightArm.restY;
-        state.rightArm.isGrabbing = false;
-      }
+      // Arms just hang down at sides - no complex reaching animation
+      state.leftArm.sprite.x = state.leftArm.restX;
+      state.leftArm.sprite.y = state.leftArm.restY;
       
-      this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-      this.applySpringPhysics(state.rightArm, deltaTime, true);
-      this.applyIK(state.leftArm, 0, 0);
-      this.applyIK(state.rightArm, 0, 0);
+      state.rightArm.sprite.x = state.rightArm.restX;
+      state.rightArm.sprite.y = state.rightArm.restY;
     }
     
     // Eye blinking animation (always active)
     this.updateEyeBlinking(state);
     
-    // Legs perform BIG STEP / JUMP motion when climbing (looks natural!)
+    // CLIMBING STEP ANIMATION - Big steps up blocks (rotation-based)
     if (state.leftLeg && state.rightLeg) {
-      // Animate climbing step cycle
+      // Alternate legs for climbing steps
       state.stepTimer += deltaTime * 1000;
-      if (state.stepTimer >= this.STEP_DURATION) {
+      if (state.stepTimer >= this.STEP_CYCLE_DURATION) {
         state.stepTimer = 0;
         state.currentStep = state.currentStep === 'left' ? 'right' : 'left';
       }
       
-      const stepProgress = state.stepTimer / this.STEP_DURATION;
+      const stepProgress = state.stepTimer / this.STEP_CYCLE_DURATION;
       const steppingLeg = state.currentStep === 'left' ? state.leftLeg : state.rightLeg;
-      const followingLeg = state.currentStep === 'left' ? state.rightLeg : state.leftLeg;
+      const plantedLeg = state.currentStep === 'left' ? state.rightLeg : state.leftLeg;
       
-      // Leading leg takes BIG STEP UP
+      // STEPPING LEG: Rotate forward and UP for big step
       if (steppingLeg) {
-        const liftHeight = Math.sin(stepProgress * Math.PI) * 25; // Lift 25 units (higher than normal walk)
-        const stepForward = Math.sin(stepProgress * Math.PI) * 15;
-        
-        steppingLeg.targetX = steppingLeg.restX + stepForward;
-        steppingLeg.targetY = steppingLeg.restY - liftHeight; // Big lift up
+        // Big forward rotation for climbing
+        const climbAngle = Math.sin(stepProgress * Math.PI) * this.CLIMB_STEP_ANGLE;
+        steppingLeg.targetRotation = climbAngle * (Math.PI / 180);
+        this.smoothRotateToTarget(steppingLeg, deltaTime);
+        steppingLeg.sprite.rotation = steppingLeg.rotation;
       }
       
-      // Following leg stays on ground, then follows
-      if (followingLeg) {
-        if (stepProgress > 0.6) {
-          // Start following after lead leg is mostly up
-          const followProgress = (stepProgress - 0.6) / 0.4; // 0 to 1
-          const followLift = Math.sin(followProgress * Math.PI) * 20;
-          followingLeg.targetY = followingLeg.restY - followLift;
-        } else {
-          // Stays grounded
-          followingLeg.targetX = followingLeg.restX;
-          followingLeg.targetY = followingLeg.restY;
-        }
+      // PLANTED LEG: Stays vertical or slight back lean
+      if (plantedLeg) {
+        plantedLeg.targetRotation = -10 * (Math.PI / 180); // Slight back lean for stability
+        this.smoothRotateToTarget(plantedLeg, deltaTime);
+        plantedLeg.sprite.rotation = plantedLeg.rotation;
       }
-      
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
-      this.applyIK(state.rightLeg, 0, 0);
     }
   }
   
@@ -582,14 +575,16 @@ export class RagdollPhysicsSystem {
       state.rightWing.setScale(wingScale);
     }
     
-    // Body bobbing - subtle up/down motion matching wing flaps
+    // Calculate body bob amount (used by both body and head)
+    const bobAmount = Math.sin(flapProgress * Math.PI * 2) * 4; // Slightly increased to 4 (was 3)
+    
+    // Body bobbing - SUBTLE up/down motion matching wing flaps
     if (state.body) {
-      const bobAmount = Math.sin(flapProgress * Math.PI * 2) * 3; // ±3 pixel bob
       state.body.y = bobAmount;
       
-      // Subtle body tilt based on horizontal movement
+      // EXTREMELY SUBTLE body tilt based on horizontal movement
       if (Math.abs(velocityX) > 20) {
-        const tilt = (velocityX / 200) * 0.15; // Slight forward tilt when moving
+        const tilt = (velocityX / 200) * 0.025; // Barely noticeable tilt (was 0.04)
         state.body.rotation = tilt;
       } else {
         state.body.rotation = 0;
@@ -601,43 +596,41 @@ export class RagdollPhysicsSystem {
       state.body.setScale(breatheScale);
     }
     
-    // Head slight bobbing (less than body)
+    // Head follows body bobbing AND rotation - CRITICAL FOR FLYING MONSTERS
     if (state.head) {
-      const headBob = Math.sin(flapProgress * Math.PI * 2) * 1.5; // Half the body bob
-      state.head.y = state.headOriginalY + headBob;
+      const headBob = Math.sin(flapProgress * Math.PI * 2) * 2; // Slightly more bob (was 1.5)
+      
+      // APPLY BOTH vertical movement AND rotation
+      (state.head as any).y = state.headOriginalY + headBob + bobAmount; // Follow body bob!
+      
+      // HEAD MUST FOLLOW BODY ROTATION for connected appearance
+      if (state.body) {
+        (state.head as any).rotation = state.body.rotation; // Head rotates with body tilt
+      }
     }
     
-    // Legs tuck up slightly when flying
+    // Legs tuck up slightly when flying - ROTATION BASED
     if (state.leftLeg && state.rightLeg) {
-      const legSway = Math.sin(flapProgress * Math.PI * 2) * 5; // Legs sway slightly
+      // Legs tuck forward slightly (small rotation)
+      const tuckAngle = 15; // Degrees forward
+      state.leftLeg.targetRotation = tuckAngle * (Math.PI / 180);
+      state.rightLeg.targetRotation = tuckAngle * (Math.PI / 180);
       
-      state.leftLeg.targetX = state.leftLeg.restX;
-      state.leftLeg.targetY = state.leftLeg.restY - 10 + legSway; // Tucked up 10 pixels
+      this.smoothRotateToTarget(state.leftLeg, deltaTime);
+      this.smoothRotateToTarget(state.rightLeg, deltaTime);
       
-      state.rightLeg.targetX = state.rightLeg.restX;
-      state.rightLeg.targetY = state.rightLeg.restY - 10 - legSway; // Opposite sway
-      
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
-      this.applyIK(state.rightLeg, 0, 0);
+      state.leftLeg.sprite.rotation = state.leftLeg.rotation;
+      state.rightLeg.sprite.rotation = state.rightLeg.rotation;
     }
     
-    // Arms/wings hang down or spread
+    // Arms hang down naturally while flying - SIMPLE
     if (state.leftArm && state.rightArm && !state.leftWing) {
-      // Non-winged flying (shouldn't happen, but just in case)
-      const armSway = Math.sin(flapProgress * Math.PI * 2) * 8;
+      // Arms just hang straight down - no complex movement
+      state.leftArm.sprite.x = state.leftArm.restX;
+      state.leftArm.sprite.y = state.leftArm.restY;
       
-      state.leftArm.targetX = state.leftArm.restX;
-      state.leftArm.targetY = state.leftArm.restY + armSway;
-      
-      state.rightArm.targetX = state.rightArm.restX;
-      state.rightArm.targetY = state.rightArm.restY - armSway;
-      
-      this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-      this.applySpringPhysics(state.rightArm, deltaTime, true);
-      this.applyIK(state.leftArm, 0, 0);
-      this.applyIK(state.rightArm, 0, 0);
+      state.rightArm.sprite.x = state.rightArm.restX;
+      state.rightArm.sprite.y = state.rightArm.restY;
     }
     
     // Eye blinking
@@ -683,54 +676,36 @@ export class RagdollPhysicsSystem {
       const relativeY = targetBlockY - (container.y + state.centerY);
       
       if (bashPhase === 'windup') {
-        // SLOW, METHODICAL wind-up - pulling back with both arms
-        const windupEase = Math.pow(phaseProgress, 2); // Ease in
+        // Wind-up - pull arms back slightly
+        const windupEase = Math.pow(phaseProgress, 2);
         
-        // Pull both arms back high
-        state.rightArm.targetX = relativeX - 35 * windupEase;
-        state.rightArm.targetY = relativeY - 40 * windupEase; // Pull up high
-        state.leftArm.targetX = relativeX - 40 * windupEase;
-        state.leftArm.targetY = relativeY - 35 * windupEase;
-        
-        state.rightArm.isGrabbing = false;
-        state.leftArm.isGrabbing = false;
+        // Pull back from rest position
+        state.rightArm.sprite.x = state.rightArm.restX - 15 * windupEase;
+        state.rightArm.sprite.y = state.rightArm.restY - 20 * windupEase;
+        state.leftArm.sprite.x = state.leftArm.restX - 15 * windupEase;
+        state.leftArm.sprite.y = state.leftArm.restY - 20 * windupEase;
         
       } else if (bashPhase === 'impact') {
-        // EXPLOSIVE FORWARD BASH - VIOLENT impact
-        const impactEase = 1 - Math.pow(1 - phaseProgress, 3); // Ease out cubic - FAST!
+        // Forward bash - move toward target
+        const impactEase = 1 - Math.pow(1 - phaseProgress, 3);
         
-        // LUNGE forward with both arms
-        const lungeDistance = 45;
-        state.rightArm.targetX = relativeX + lungeDistance * impactEase;
-        state.rightArm.targetY = relativeY + 5 * impactEase; // Slight downward bash
-        state.leftArm.targetX = relativeX + (lungeDistance - 10) * impactEase;
-        state.leftArm.targetY = relativeY;
-        
-        // GRIPPING at impact
-        state.rightArm.isGrabbing = phaseProgress > 0.5;
-        state.leftArm.isGrabbing = phaseProgress > 0.5;
+        // Simple forward movement
+        state.rightArm.sprite.x = relativeX * 0.5 * impactEase;
+        state.rightArm.sprite.y = relativeY * 0.5 * impactEase;
+        state.leftArm.sprite.x = relativeX * 0.5 * impactEase;
+        state.leftArm.sprite.y = relativeY * 0.5 * impactEase;
         
       } else {
-        // SLOW recovery - methodical pull back
+        // Recovery - return to rest
         const recoveryEase = Math.pow(phaseProgress, 2);
         
-        // Return to rest slowly
-        const pullBackX = relativeX + 45;
-        const pullBackY = relativeY + 5;
-        
-        state.rightArm.targetX = pullBackX - pullBackX * recoveryEase;
-        state.rightArm.targetY = pullBackY - pullBackY * recoveryEase;
-        state.leftArm.targetX = (pullBackX - 10) - (pullBackX - 10) * recoveryEase;
-        state.leftArm.targetY = pullBackY - pullBackY * recoveryEase;
-        
-        state.rightArm.isGrabbing = false;
-        state.leftArm.isGrabbing = false;
+        // Lerp back to rest position
+        const restProgress = 1 - recoveryEase;
+        state.rightArm.sprite.x = relativeX * 0.5 * restProgress + state.rightArm.restX * recoveryEase;
+        state.rightArm.sprite.y = relativeY * 0.5 * restProgress + state.rightArm.restY * recoveryEase;
+        state.leftArm.sprite.x = relativeX * 0.5 * restProgress + state.leftArm.restX * recoveryEase;
+        state.leftArm.sprite.y = relativeY * 0.5 * restProgress + state.leftArm.restY * recoveryEase;
       }
-      
-      this.applySpringPhysics(state.rightArm, deltaTime, true);
-      this.applySpringPhysics(state.leftArm, deltaTime, true);
-      this.applyIK(state.rightArm, 0, 0);
-      this.applyIK(state.leftArm, 0, 0);
     }
     
     // ENTIRE BODY lunges forward during bash
@@ -753,35 +728,46 @@ export class RagdollPhysicsSystem {
       }
     }
     
-    // Head follows the lunge
-    if (state.head) {
+    // Head MUST follow body movement and rotation during mining
+    if (state.head && state.body) {
+      // Head follows body's horizontal movement
+      (state.head as any).x = state.headOriginalX + state.body.x;
+      
+      // Head follows body's vertical movement
       if (bashPhase === 'impact') {
-        state.head.y = state.headOriginalY + 2 * phaseProgress; // Lunge down
+        (state.head as any).y = state.headOriginalY + 2 * phaseProgress; // Lunge down
       } else {
-        state.head.y = state.headOriginalY;
+        (state.head as any).y = state.headOriginalY;
       }
+      
+      // Head MUST rotate with body
+      (state.head as any).rotation = state.body.rotation;
     }
     
     // Legs brace during bash
     if (state.leftLeg && state.rightLeg) {
+      // LEGS: Brace and push during mining bash - ROTATION BASED
       if (bashPhase === 'windup') {
-        // Crouch slightly
-        state.leftLeg.targetY = state.leftLeg.restY + 5 * phaseProgress;
-        state.rightLeg.targetY = state.rightLeg.restY + 5 * phaseProgress;
+        // Crouch - legs bend outward (bracing)
+        const crouchAngle = 20 * phaseProgress; // Up to 20 degrees
+        state.leftLeg.targetRotation = -crouchAngle * (Math.PI / 180);
+        state.rightLeg.targetRotation = crouchAngle * (Math.PI / 180);
       } else if (bashPhase === 'impact') {
-        // Push off - legs extend
-        state.leftLeg.targetY = state.leftLeg.restY - 3 * phaseProgress;
-        state.rightLeg.targetY = state.rightLeg.restY - 3 * phaseProgress;
+        // Push off - legs straighten
+        const straightenAmount = 1 - phaseProgress; // 1 to 0
+        const pushAngle = 20 * straightenAmount;
+        state.leftLeg.targetRotation = -pushAngle * (Math.PI / 180);
+        state.rightLeg.targetRotation = pushAngle * (Math.PI / 180);
       } else {
-        // Return
-        state.leftLeg.targetY = state.leftLeg.restY;
-        state.rightLeg.targetY = state.rightLeg.restY;
+        // Return to neutral
+        state.leftLeg.targetRotation = 0;
+        state.rightLeg.targetRotation = 0;
       }
       
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
-      this.applyIK(state.rightLeg, 0, 0);
+      this.smoothRotateToTarget(state.leftLeg, deltaTime);
+      this.smoothRotateToTarget(state.rightLeg, deltaTime);
+      state.leftLeg.sprite.rotation = state.leftLeg.rotation;
+      state.rightLeg.sprite.rotation = state.rightLeg.rotation;
     }
     
     // Eye blinking animation (always active)
@@ -896,33 +882,26 @@ export class RagdollPhysicsSystem {
     const breatheCycle = Date.now() * 0.0012; // Slow breathing
     const breatheOffset = Math.sin(breatheCycle) * 4; // Visible breathing movement (was 3)
     
+    // IDLE LEGS - Hang straight down with rotation-based animation
     if (state.leftLeg) {
-      state.leftLeg.targetX = state.leftLeg.restX;
-      state.leftLeg.targetY = state.leftLeg.restY;
-      this.applySpringPhysics(state.leftLeg, deltaTime);
-      this.applyIK(state.leftLeg, 0, 0);
+      state.leftLeg.targetRotation = 0; // Straight down
+      this.smoothRotateToTarget(state.leftLeg, deltaTime);
+      state.leftLeg.sprite.rotation = state.leftLeg.rotation;
     }
     if (state.rightLeg) {
-      state.rightLeg.targetX = state.rightLeg.restX;
-      state.rightLeg.targetY = state.rightLeg.restY;
-      this.applySpringPhysics(state.rightLeg, deltaTime);
-      this.applyIK(state.rightLeg, 0, 0);
+      state.rightLeg.targetRotation = 0; // Straight down
+      this.smoothRotateToTarget(state.rightLeg, deltaTime);
+      state.rightLeg.sprite.rotation = state.rightLeg.rotation;
     }
     
-    // Arms hang DOWN vertically when idle with tiny breathing sway
+    // Arms hang DOWN naturally when idle - SIMPLE
     if (state.leftArm) {
-      state.leftArm.targetX = state.leftArm.restX; // Pinned to side
-      state.leftArm.targetY = state.leftArm.restY + breatheOffset * 0.3; // Tiny breathing motion
-      state.leftArm.isGrabbing = false; // Release grip
-      this.applySpringPhysics(state.leftArm, deltaTime, true); // isArm=true for slow movement
-      this.applyIK(state.leftArm, 0, 0);
+      state.leftArm.sprite.x = state.leftArm.restX;
+      state.leftArm.sprite.y = state.leftArm.restY + breatheOffset * 0.2; // Tiny breathing sway
     }
     if (state.rightArm) {
-      state.rightArm.targetX = state.rightArm.restX; // Pinned to side
-      state.rightArm.targetY = state.rightArm.restY - breatheOffset * 0.3; // Tiny opposite breathing
-      state.rightArm.isGrabbing = false; // Release grip
-      this.applySpringPhysics(state.rightArm, deltaTime, true); // isArm=true for slow movement
-      this.applyIK(state.rightArm, 0, 0);
+      state.rightArm.sprite.x = state.rightArm.restX;
+      state.rightArm.sprite.y = state.rightArm.restY - breatheOffset * 0.2; // Opposite
     }
     
     if (state.body) {
@@ -932,11 +911,42 @@ export class RagdollPhysicsSystem {
       state.body.setScale(breatheScale);
     }
     if (state.head) {
-      state.head.rotation = 0;
+      (state.head as any).rotation = 0; // Reset rotation when idle
     }
     
     // Eye blinking animation (always active)
     this.updateEyeBlinking(state);
+  }
+  
+  /**
+   * JUMP SQUAT ANIMATION - Legs bend before jumping
+   * Call this before a jump to create anticipation
+   */
+  public updateJumpSquat(monsterId: string, squatProgress: number): void {
+    const state = this.ragdollStates.get(monsterId);
+    if (!state || !state.leftLeg || !state.rightLeg) return;
+    
+    // Squat: Legs bend outward (both rotate outward)
+    const squatAngle = squatProgress * this.JUMP_SQUAT_ANGLE;
+    
+    state.leftLeg.targetRotation = -squatAngle * (Math.PI / 180); // Bend left outward
+    state.rightLeg.targetRotation = squatAngle * (Math.PI / 180); // Bend right outward
+    
+    // Quick rotation for responsive jumping
+    const quickRotationSpeed = 0.3;
+    const leftDiff = state.leftLeg.targetRotation - state.leftLeg.rotation;
+    const rightDiff = state.rightLeg.targetRotation - state.rightLeg.rotation;
+    
+    state.leftLeg.rotation += leftDiff * quickRotationSpeed;
+    state.rightLeg.rotation += rightDiff * quickRotationSpeed;
+    
+    state.leftLeg.sprite.rotation = state.leftLeg.rotation;
+    state.rightLeg.sprite.rotation = state.rightLeg.rotation;
+    
+    // Body crouches down
+    if (state.body) {
+      state.body.y = squatProgress * 8; // Crouch down
+    }
   }
   
   /**

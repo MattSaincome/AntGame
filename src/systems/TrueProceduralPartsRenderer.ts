@@ -422,13 +422,13 @@ export class TrueProceduralPartsRenderer {
     // Position eyes/face in the UPPER portion of the head (not center)
     let eyeY = -10; // Default position
     if (headSprite) {
-      // Eyes should be in the upper portion of the head - VERY HIGH!
+      // Eyes should be in the MIDDLE-UPPER portion of the head
       // Calculate based on head sprite's actual displayed size after scaling
       const headTop = headSprite.y - (headSprite.displayHeight / 2);
       const headBottom = headSprite.y + (headSprite.displayHeight / 2);
-      // Position eyes at 10% down from the top (very top of head)
-      eyeY = headTop + (headSprite.displayHeight * 0.10);
-      console.log(`👁️ Positioning eyes VERY HIGH on head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
+      // Position eyes at 35% down from the top (upper-middle of head)
+      eyeY = headTop + (headSprite.displayHeight * 0.35);
+      console.log(`👁️ Positioning eyes in UPPER-MIDDLE of head: Y=${eyeY.toFixed(1)} (head: ${headTop.toFixed(1)} to ${headBottom.toFixed(1)})`);
     }
     let eyesAdded = false;
     let faceAdded = false;
@@ -643,7 +643,7 @@ export class TrueProceduralPartsRenderer {
         
         eyes.forEach((eyePos, i) => {
           const eye = this.scene.add.sprite(eyePos.x, eyePos.y, eyeTextureKey);
-          eye.setDepth(25);
+          eye.setDepth(30); // HIGHEST - eyes always on top!
           eye.setName(eyePos.name);
           eye.setScale(eyeScale);
           container.add(eye);
@@ -658,7 +658,7 @@ export class TrueProceduralPartsRenderer {
           const y = eyeY + Math.sin(angle) * radius;
           
           const eye = this.scene.add.sprite(x, y, eyeTextureKey);
-          eye.setDepth(25);
+          eye.setDepth(30); // HIGHEST - eyes always on top!
           eye.setName(i === 0 ? 'eyes' : `eye${i}`);
           eye.setScale(eyeScale);
           container.add(eye);
@@ -721,26 +721,52 @@ export class TrueProceduralPartsRenderer {
       
       for (const mouthKey of mouthSearchKeys) {
         if (mouthKey && this.scene.textures.exists(mouthKey)) {
-          // Smart mouth positioning - ALWAYS below eyes with proper spacing
-          let mouthY = eyeY + 30; // Default: 30px below eye center
+          // SMART MOUTH POSITIONING - In LOWER half of head
+          let mouthY = 0; // Start at center
           
-          // FACIAL FEATURE COLLISION DETECTION - prevent overlap
-          if (eyeSprite) {
-            const eyeBottom = eyeY + (eyeSprite.displayHeight / 2);
-            const minSeparation = 20; // Minimum gap between eye bottom and mouth center
+          if (headSprite) {
+            // Calculate head dimensions
+            const headTop = headSprite.y - (headSprite.displayHeight / 2);
+            const headBottom = headSprite.y + (headSprite.displayHeight / 2);
+            const headHeight = headSprite.displayHeight;
             
-            // Mouth must be AT LEAST minSeparation below the bottom of eyes
-            const safeMouthY = eyeBottom + minSeparation;
+            // Position mouth at 70% down from top (lower 30% of head)
+            mouthY = headTop + (headHeight * 0.70);
             
-            // Use whichever is LOWER (higher Y value = lower on screen)
-            mouthY = Math.max(mouthY, safeMouthY);
-            console.log(`👄 Mouth positioned at Y=${mouthY.toFixed(1)} (eyes bottom: ${eyeBottom.toFixed(1)})`);
+            // Ensure it's below eyes with proper spacing
+            if (eyeSprite) {
+              const eyeBottom = eyeY + (eyeSprite.displayHeight / 2);
+              const minSeparation = 15; // Minimum gap
+              const safeMouthY = eyeBottom + minSeparation;
+              
+              // Use whichever is LOWER
+              mouthY = Math.max(mouthY, safeMouthY);
+            }
+            
+            console.log(`👄 Mouth at ${((mouthY - headTop) / headHeight * 100).toFixed(0)}% down head (Y=${mouthY.toFixed(1)})`);
+          } else {
+            // No head - position below eyes
+            mouthY = eyeY + 25;
           }
           
+          // DYNAMIC MOUTH SCALING based on head size
+          const mouthTexture = this.scene.textures.get(mouthKey);
+          const mouthTextureWidth = mouthTexture.getSourceImage().width;
+          
+          // Calculate head width for scaling
+          const currentHeadWidth = headSprite ? headSprite.displayWidth : 100;
+          
+          // Mouth should be 12-15% of head width
+          const targetMouthWidth = currentHeadWidth * 0.13;
+          let mouthScale = targetMouthWidth / mouthTextureWidth;
+          
+          // Cap mouth size (not too big, not too small)
+          mouthScale = Math.max(0.3, Math.min(0.8, mouthScale));
+          
           const mouthSprite = this.scene.add.sprite(0, mouthY, mouthKey);
-          mouthSprite.setDepth(25); // Same as eyes
+          mouthSprite.setDepth(25); // Below eyes (30) but above everything else
           mouthSprite.setName('mouth');
-          mouthSprite.setScale(1.0);
+          mouthSprite.setScale(mouthScale);
           
           // Tint mouth to match accent color (25% blend)
           const mouthTint = this.blendColors(0xFFFFFF, colorScheme.accentColor, 0.25);

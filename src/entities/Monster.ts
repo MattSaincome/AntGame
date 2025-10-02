@@ -149,6 +149,10 @@ export class Monster {
   public spawnTime: number; // Track when monster was created
   public lastStuckDetection: number; // Prevent spam detection
   
+  // Mario-style jump system
+  public hasJumped: boolean = false; // Currently in a jump
+  public canDoubleJump: boolean = false; // Can perform double-jump
+  
   // Movement history for stuck detection
   public movementHistory: { x: number; y: number; time: number }[] = [];
   
@@ -1290,7 +1294,7 @@ export class Monster {
     
     // Start climbing mode
     this.isClimbing = true;
-    console.log(`Monster ${this.id} threw resource ${this.thrownResourceId} upward for climbing`);
+    // console.log(`Monster ${this.id} threw resource ${this.thrownResourceId} upward for climbing`); // Disabled - too spammy
   }
   
   /**
@@ -1352,7 +1356,7 @@ export class Monster {
       this.isClimbing = false;
       chunk.isBeingCarried = true;
       chunk.currentCarriers = [this.id];
-      console.log(`Monster ${this.id} picked up thrown resource ${this.carryingChunkId} after climbing`);
+      // console.log(`Monster ${this.id} picked up thrown resource ${this.carryingChunkId} after climbing`); // Disabled - too spammy
       return true;
     }
     
