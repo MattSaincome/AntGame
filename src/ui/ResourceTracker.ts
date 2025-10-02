@@ -16,14 +16,20 @@ export class ResourceTracker {
   private scene: Phaser.Scene;
   private resources: ResourceInventory;
   
-  // UI Elements
-  private resourcePanel!: Phaser.GameObjects.Graphics;
-  private resourceIcons: Map<string, Phaser.GameObjects.Graphics>;
+  // UI Elements - Clean RTS Style
+  private hudBar!: Phaser.GameObjects.Graphics;
   private resourceTexts: Map<string, Phaser.GameObjects.Text>;
-  private resourceLabels: Map<string, Phaser.GameObjects.Text>;
-  private totalBg!: Phaser.GameObjects.Graphics;
-  private totalLabel!: Phaser.GameObjects.Text;
+  private populationText!: Phaser.GameObjects.Text;
   private allUIElements: Phaser.GameObjects.GameObject[] = [];
+  
+  // Track population
+  public population: number = 0;
+  public maxPopulation: number = 200;
+  
+  // Track last camera state to avoid unnecessary redraws
+  private lastCameraWidth: number = -1;
+  private lastCameraHeight: number = -1;
+  private lastCameraZoom: number = -1;
   
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -38,11 +44,9 @@ export class ResourceTracker {
       total: 0
     };
     
-    this.resourceIcons = new Map();
     this.resourceTexts = new Map();
-    this.resourceLabels = new Map();
     console.log('ResourceTracker: Initializing RTS resource interface...');
-    this.createResourceUI();
+    this.createModernRTSUI();
     console.log('ResourceTracker: RTS interface created successfully!');
     
     // Listen for window resize only
@@ -95,250 +99,168 @@ export class ResourceTracker {
   }
 
   /**
-   * Create Age of Empires 2-style resource UI
+   * Create modern RTS-style HUD - sleek bottom bar FIXED to screen
    */
-  private createResourceUI(): void {
-    // Main resource panel background
-    this.resourcePanel = this.scene.add.graphics();
-    this.resourcePanel.setScrollFactor(0); // Keep UI fixed on screen
-    this.resourcePanel.setDepth(2000); // Higher depth to ensure visibility
-    this.allUIElements.push(this.resourcePanel);
+  private createModernRTSUI(): void {
+    // Main HUD bar - FIXED to screen, doesn't scroll with camera
+    this.hudBar = this.scene.add.graphics();
+    this.hudBar.setScrollFactor(0); // FIXED to screen
+    this.hudBar.setDepth(10000);
+    this.allUIElements.push(this.hudBar);
     
-    // Draw initial panel
-    this.drawResourcePanel();
-
-    // Create resource type displays
-    const resourceTypes = [
-      { key: 'dirt', name: 'Dirt', color: 0x8B4513, x: 30 },
-      { key: 'stone', name: 'Stone', color: 0x708090, x: 110 },
-      { key: 'rock', name: 'Rock', color: 0x2F4F4F, x: 190 },
-      { key: 'copper', name: 'Copper', color: 0xB87333, x: 270 },
-      { key: 'iron', name: 'Iron', color: 0x464451, x: 350 },
-      { key: 'gold', name: 'Gold', color: 0xFFD700, x: 430 },
-      { key: 'crystal', name: 'Crystal', color: 0xFF69B4, x: 510 }
-    ];
-
-    resourceTypes.forEach(resource => {
-      // Create resource icon
-      const icon = this.scene.add.graphics();
-      icon.setScrollFactor(0);
-      icon.setDepth(2001);
-      this.allUIElements.push(icon);
-      
-      // Store icon for later drawing
-      this.resourceIcons.set(resource.key, icon);
-
-      // Create resource text
-      const text = this.scene.add.text(0, 0, '0', {
-        fontSize: '14px',
-        color: '#FFFFFF',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2
-      });
-      text.setOrigin(0.5);
-      text.setScrollFactor(0);
-      text.setDepth(2001);
-      this.allUIElements.push(text);
-      
-      this.resourceTexts.set(resource.key, text);
-
-      // Resource type label
-      const label = this.scene.add.text(0, 0, resource.name.charAt(0).toUpperCase(), {
-        fontSize: '12px',
-        color: '#FFFFFF',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2
-      });
-      label.setOrigin(0.5);
-      label.setScrollFactor(0);
-      label.setDepth(2002);
-      this.allUIElements.push(label);
-      
-      this.resourceLabels.set(resource.key, label);
-    });
-
-    // Total resources display
-    this.totalBg = this.scene.add.graphics();
-    this.totalBg.setScrollFactor(0);
-    this.totalBg.setDepth(2001);
-    this.allUIElements.push(this.totalBg);
-
-    this.totalLabel = this.scene.add.text(0, 0, 'TOTAL', {
-      fontSize: '12px',
-      color: '#FFD700',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 2
-    });
-    this.totalLabel.setOrigin(0.5);
-    this.totalLabel.setScrollFactor(0);
-    this.totalLabel.setDepth(2002);
-    this.allUIElements.push(this.totalLabel);
-
-    const totalText = this.scene.add.text(0, 0, '0', {
+    // Sleek Helvetica-style font configuration
+    const fontStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontSize: '16px',
-      color: '#FFD700',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 2
-    });
-    totalText.setOrigin(0.5);
-    totalText.setScrollFactor(0);
-    totalText.setDepth(2002);
-    this.allUIElements.push(totalText);
+      color: '#FFFFFF',
+      fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+      fontStyle: '300',  // Light weight for modern look
+    };
     
-    this.resourceTexts.set('total', totalText);
-    
-    // Position everything initially
-    this.positionUIElements();
-  }
-
-  private drawResourcePanel(): void {
-    const screenHeight = this.scene.scale.height;
-    const hudHeight = Math.floor(screenHeight / 8);
-    const panelY = screenHeight - hudHeight + 10;
-    const panelWidth = 600;
-    const panelHeight = 50;
-    
-    // Clear and redraw panel
-    this.resourcePanel.clear();
-    this.resourcePanel.fillStyle(0x2C1810, 0.95); // Dark brown
-    this.resourcePanel.fillRoundedRect(10, panelY, panelWidth, panelHeight, 8);
-    
-    // Panel border
-    this.resourcePanel.lineStyle(2, 0x8B4513, 1);
-    this.resourcePanel.strokeRoundedRect(10, panelY, panelWidth, panelHeight, 8);
-    
-    // Draw resource icons
-    const resourceTypes = [
-      { key: 'dirt', color: 0x8B4513, x: 30 },
-      { key: 'stone', color: 0x708090, x: 110 },
-      { key: 'rock', color: 0x2F4F4F, x: 190 },
-      { key: 'copper', color: 0xB87333, x: 270 },
-      { key: 'iron', color: 0x464451, x: 350 },
-      { key: 'gold', color: 0xFFD700, x: 430 },
-      { key: 'crystal', color: 0xFF69B4, x: 510 }
+    // Create resource displays
+    const resources = [
+      { key: 'dirt', icon: '🪨' },
+      { key: 'stone', icon: '🪨' },
+      { key: 'copper', icon: '🪙' },
+      { key: 'iron', icon: '⛓️' },
+      { key: 'gold', icon: '🪙' },
+      { key: 'crystal', icon: '💎' }
     ];
     
-    resourceTypes.forEach(resource => {
-      const icon = this.resourceIcons.get(resource.key);
-      if (icon) {
-        const iconY = panelY + 25;
-        icon.clear();
-        // Icon background
-        icon.fillStyle(0x000000, 0.5);
-        icon.fillCircle(resource.x, iconY, 18);
-        // Icon color
-        icon.fillStyle(resource.color, 0.9);
-        icon.fillCircle(resource.x, iconY, 15);
-        // Icon inner detail
-        icon.fillStyle(resource.color, 0.7);
-        icon.fillCircle(resource.x, iconY, 10);
-      }
+    resources.forEach(resource => {
+      const text = this.scene.add.text(0, 0, `${resource.icon} 0`, fontStyle);
+      text.setScrollFactor(0); // FIXED to screen
+      text.setDepth(10001);
+      this.allUIElements.push(text);
+      this.resourceTexts.set(resource.key, text);
     });
     
-    // Draw total background
-    if (this.totalBg) {
-      this.totalBg.clear();
-      this.totalBg.fillStyle(0x1A1A1A, 0.8);
-      this.totalBg.fillRoundedRect(620, panelY, 100, panelHeight, 4);
-      this.totalBg.lineStyle(2, 0xFFD700, 1);
-      this.totalBg.strokeRoundedRect(620, panelY, 100, panelHeight, 4);
-    }
+    // Population display
+    this.populationText = this.scene.add.text(0, 0, '👥 0/200', fontStyle);
+    this.populationText.setScrollFactor(0); // FIXED to screen
+    this.populationText.setDepth(10001);
+    this.allUIElements.push(this.populationText);
+    
+    // Initial draw
+    this.drawModernHUD();
+    this.positionModernUI();
   }
 
-  private positionUIElements(): void {
-    const screenHeight = this.scene.scale.height;
-    const hudHeight = Math.floor(screenHeight / 8);
-    const panelY = screenHeight - hudHeight + 10;
+  /**
+   * Draw modern, sleek HUD bar - FIXED to bottom of SCREEN
+   */
+  private drawModernHUD(): void {
+    const camera = this.scene.cameras.main;
+    const screenWidth = camera.width;
+    const screenHeight = camera.height;
     
-    // Position resource texts and labels
-    const resourceTypes = [
-      { key: 'dirt', x: 30 },
-      { key: 'stone', x: 110 },
-      { key: 'rock', x: 190 },
-      { key: 'copper', x: 270 },
-      { key: 'iron', x: 350 },
-      { key: 'gold', x: 430 },
-      { key: 'crystal', x: 510 }
-    ];
+    // HUD bar dimensions (fixed size)
+    const barHeight = 40;
+    // Position in SCREEN SPACE (setScrollFactor(0) already makes this screen-relative)
+    const barX = 0;
+    const barY = screenHeight - barHeight;
     
-    resourceTypes.forEach(resource => {
-      const text = this.resourceTexts.get(resource.key);
-      const label = this.resourceLabels.get(resource.key);
-      
+    console.log(`🎨 HUD DEBUG: screenW=${screenWidth}, screenH=${screenHeight}, barY=${barY}, zoom=${camera.zoom.toFixed(2)}`);
+    
+    this.hudBar.clear();
+    
+    // BRIGHT RED for debugging
+    this.hudBar.fillStyle(0xFF0000, 0.9);
+    this.hudBar.fillRect(barX, barY, screenWidth, barHeight);
+    
+    // Bright GREEN border
+    this.hudBar.lineStyle(4, 0x00FF00, 1.0);
+    this.hudBar.lineBetween(barX, barY, barX + screenWidth, barY);
+  }
+
+  /**
+   * Position modern UI elements - FIXED to SCREEN
+   */
+  private positionModernUI(): void {
+    const camera = this.scene.cameras.main;
+    const screenWidth = camera.width;
+    const screenHeight = camera.height;
+    const cameraZoom = camera.zoom;
+    
+    // HUD bar dimensions (fixed size)
+    const barHeight = 40;
+    const barY = screenHeight - barHeight;
+    const centerY = barY + barHeight / 2;
+    
+    // Scale font size inversely to zoom so it appears constant size
+    const scaleFactor = Phaser.Math.Clamp(1 / cameraZoom, 0.5, 2.0);
+    const fontSize = Math.round(16 * scaleFactor);
+    
+    const fontStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontSize: `${fontSize}px`,
+      color: '#FFFFFF',
+      fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+      fontStyle: '300',
+    };
+    
+    // Position resource icons from left (in SCREEN SPACE)
+    let currentX = 20;
+    const spacing = 100;
+    
+    const resources = ['dirt', 'stone', 'copper', 'iron', 'gold', 'crystal'];
+    resources.forEach(key => {
+      const text = this.resourceTexts.get(key);
       if (text) {
-        text.setPosition(resource.x, panelY + 40);
-      }
-      if (label) {
-        label.setPosition(resource.x, panelY + 13);
+        text.setPosition(currentX, centerY);
+        currentX += spacing;
+        text.setStyle(fontStyle);
+        text.setOrigin(0, 0.5);
       }
     });
     
-    // Position total elements
-    const totalText = this.resourceTexts.get('total');
-    if (totalText) {
-      totalText.setPosition(670, panelY + 40);
-    }
-    if (this.totalLabel) {
-      this.totalLabel.setPosition(670, panelY + 15);
-    }
+    // Population on the right side of screen (in SCREEN SPACE)
+    const popX = screenWidth - 150;
+    this.populationText.setStyle(fontStyle);
+    this.populationText.setPosition(popX, centerY);
+    this.populationText.setOrigin(0, 0.5);
   }
 
   private handleResize(): void {
-    // Redraw the panel at new position
-    this.drawResourcePanel();
+    // Redraw the HUD bar
+    this.drawModernHUD();
     
     // Reposition all UI elements
-    this.positionUIElements();
+    this.positionModernUI();
+  }
+  
+  /**
+   * Update HUD position EVERY FRAME - sticks to camera no matter what
+   */
+  update(): void {
+    // ALWAYS redraw and reposition - stick to camera viewport!
+    this.drawModernHUD();
+    this.positionModernUI();
   }
 
   /**
    * Update the resource display with current values
    */
   private updateResourceDisplay(): void {
-    // Update individual resource counters
-    this.resourceTexts.get('dirt')?.setText(this.resources.dirt.toString());
-    this.resourceTexts.get('stone')?.setText(this.resources.stone.toString());
-    this.resourceTexts.get('rock')?.setText(this.resources.rock.toString());
-    this.resourceTexts.get('copper')?.setText(this.resources.copper.toString());
-    this.resourceTexts.get('iron')?.setText(this.resources.iron.toString());
-    this.resourceTexts.get('gold')?.setText(this.resources.gold.toString());
-    this.resourceTexts.get('crystal')?.setText(this.resources.crystal.toString());
-    this.resourceTexts.get('total')?.setText(this.resources.total.toString());
-
-    // Add pulsing effect to icons when resources increase
-    this.pulseUpdatedResources();
+    // Update with emoji icons for clean look
+    this.resourceTexts.get('dirt')?.setText(`🪨 ${this.resources.dirt}`);
+    this.resourceTexts.get('stone')?.setText(`🪨 ${this.resources.stone}`);
+    this.resourceTexts.get('copper')?.setText(`🪙 ${this.resources.copper}`);
+    this.resourceTexts.get('iron')?.setText(`⛓️ ${this.resources.iron}`);
+    this.resourceTexts.get('gold')?.setText(`🪙 ${this.resources.gold}`);
+    this.resourceTexts.get('crystal')?.setText(`💎 ${this.resources.crystal}`);
+    
+    // Update population
+    this.populationText?.setText(`👥 ${this.population}/${this.maxPopulation}`);
   }
 
   /**
-   * Create pulsing effect on resource icons when they're updated
+   * Update population display
    */
-  private pulseUpdatedResources(): void {
-    const resourceKeys = ['dirt', 'stone', 'rock', 'copper', 'iron', 'gold', 'crystal'];
-    
-    resourceKeys.forEach(key => {
-      const icon = this.resourceIcons.get(key);
-      const text = this.resourceTexts.get(key);
-      
-      if (icon && text) {
-        // Quick pulse animation
-        this.scene.tweens.add({
-          targets: [icon, text],
-          scaleX: 1.2,
-          scaleY: 1.2,
-          duration: 150,
-          yoyo: true,
-          ease: 'Power2'
-        });
-      }
-    });
+  updatePopulation(current: number, max?: number): void {
+    this.population = current;
+    if (max !== undefined) {
+      this.maxPopulation = max;
+    }
+    this.updateResourceDisplay();
   }
 
   /**
@@ -455,8 +377,6 @@ export class ResourceTracker {
     
     // Destroy all UI elements
     this.allUIElements.forEach(element => element.destroy());
-    this.resourceIcons.clear();
     this.resourceTexts.clear();
-    this.resourceLabels.clear();
   }
 }
