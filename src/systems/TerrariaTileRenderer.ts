@@ -291,6 +291,11 @@ export class TerrariaTileRenderer {
     if (tile.type === TileType.AIR || tile.type === 'air' || tile.type === 0) {
       return null; // Background shows through, fully visible
     }
+    
+    // Handle ramp tiles - special rendering for diagonal paths
+    if (tile.type === TileType.RAMP_UP_RIGHT || tile.type === TileType.RAMP_UP_LEFT) {
+      return this.renderRamp(x, y, tile, tileSize);
+    }
 
     // Create container for this tile
     const container = this.scene.add.container(
@@ -342,6 +347,49 @@ export class TerrariaTileRenderer {
     }
 
     // Store reference
+    this.tileSprites.set(tileKey, container);
+    
+    return container;
+  }
+  
+  /**
+   * Render a ramp tile (diagonal path)
+   */
+  private renderRamp(x: number, y: number, tile: any, tileSize: number): Phaser.GameObjects.Container {
+    const tileKey = `tile_${x}_${y}`;
+    const container = this.scene.add.container(
+      x * tileSize,
+      y * tileSize
+    );
+    
+    // Create graphics for the ramp
+    const graphics = this.scene.add.graphics();
+    const rampColor = 0x9B6B3F; // Dirt path brown color
+    
+    // Draw triangle based on ramp direction
+    graphics.fillStyle(rampColor, 1.0);
+    graphics.beginPath();
+    
+    if (tile.type === TileType.RAMP_UP_RIGHT) {
+      // Ramp ascending left to right: /
+      graphics.moveTo(0, tileSize); // Bottom left
+      graphics.lineTo(tileSize, 0); // Top right
+      graphics.lineTo(tileSize, tileSize); // Bottom right
+    } else if (tile.type === TileType.RAMP_UP_LEFT) {
+      // Ramp ascending right to left: \
+      graphics.moveTo(0, 0); // Top left
+      graphics.lineTo(tileSize, tileSize); // Bottom right
+      graphics.lineTo(0, tileSize); // Bottom left
+    }
+    
+    graphics.closePath();
+    graphics.fillPath();
+    
+    // Add a lighter edge for visibility
+    graphics.lineStyle(1, 0xB8855F, 0.8);
+    graphics.strokePath();
+    
+    container.add(graphics);
     this.tileSprites.set(tileKey, container);
     
     return container;

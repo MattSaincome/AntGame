@@ -13,7 +13,9 @@ export enum TileType {
   CRYSTAL = 'crystal',
   WATER = 'water',
   LAVA = 'lava',
-  BEDROCK = 'bedrock'
+  BEDROCK = 'bedrock',
+  RAMP_UP_RIGHT = 'ramp_up_right',  // Ramp ascending left to right /
+  RAMP_UP_LEFT = 'ramp_up_left'     // Ramp ascending right to left \
 }
 
 export interface Tile {
@@ -135,6 +137,24 @@ export const TILE_PROPERTIES: Record<TileType, TileProperties> = {
     resourceValue: 0,
     dangerous: false,
     spriteName: 'bedrock'
+  },
+  [TileType.RAMP_UP_RIGHT]: {
+    solid: true,
+    diggable: false,
+    hardness: 0,
+    color: '#9B6B3F',
+    resourceValue: 0,
+    dangerous: false,
+    spriteName: 'ramp_up_right'
+  },
+  [TileType.RAMP_UP_LEFT]: {
+    solid: true,
+    diggable: false,
+    hardness: 0,
+    color: '#9B6B3F',
+    resourceValue: 0,
+    dangerous: false,
+    spriteName: 'ramp_up_left'
   }
 };
 

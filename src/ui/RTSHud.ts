@@ -26,6 +26,11 @@ export class RTSHud {
   private pauseLabel!: Phaser.GameObjects.Text;
   private speedButtons: { button: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }[] = [];
   private pheromoneLabels: Phaser.GameObjects.Text[] = [];
+  
+  // Track camera state for zoom responsiveness
+  private lastCameraWidth: number = 0;
+  private lastCameraHeight: number = 0;
+  private lastCameraZoom: number = 1;
 
   constructor(scene: Phaser.Scene, pheromoneSystem: PheromoneSystem) {
     this.scene = scene;
@@ -397,6 +402,70 @@ export class RTSHud {
     if (this.pauseLabel) {
       this.pauseLabel.setPosition(speedPanelX, speedPanelY + 40);
     }
+  }
+  
+  /**
+   * Update HUD every frame - check for camera zoom changes
+   */
+  public update(): void {
+    const screenWidth = this.scene.scale.width;
+    const screenHeight = this.scene.scale.height;
+    const cameraZoom = this.scene.cameras.main.zoom;
+    
+    // Only update if screen size or zoom changed
+    if (screenWidth !== this.lastCameraWidth || 
+        screenHeight !== this.lastCameraHeight || 
+        cameraZoom !== this.lastCameraZoom) {
+      this.lastCameraWidth = screenWidth;
+      this.lastCameraHeight = screenHeight;
+      this.lastCameraZoom = cameraZoom;
+      this.updateUIForZoom();
+    }
+  }
+  
+  /**
+   * Update all UI elements for current camera zoom level
+   */
+  private updateUIForZoom(): void {
+    const cameraZoom = this.scene.cameras.main.zoom;
+    
+    // Scale factor inversely to zoom (clamped for reasonable sizes)
+    const scaleFactor = Phaser.Math.Clamp(1 / cameraZoom, 0.5, 1.5);
+    
+    // Update pheromone title font size
+    const titleFontSize = Math.round(14 * scaleFactor);
+    this.pheromoneTitle?.setFontSize(titleFontSize);
+    
+    // Update pheromone instruction font size
+    const instructionFontSize = Math.round(11 * scaleFactor);
+    this.pheromoneInstructions?.setFontSize(instructionFontSize);
+    
+    // Update speed title font size
+    this.speedTitle?.setFontSize(titleFontSize);
+    
+    // Update speed display font size
+    const speedDisplayFontSize = Math.round(20 * scaleFactor);
+    this.speedDisplay?.setFontSize(speedDisplayFontSize);
+    
+    // Update speed button labels
+    const buttonFontSize = Math.round(10 * scaleFactor);
+    this.speedButtons.forEach(btn => {
+      btn.label?.setFontSize(buttonFontSize);
+    });
+    
+    // Update pheromone labels
+    this.pheromoneLabels.forEach(label => {
+      label?.setFontSize(buttonFontSize);
+    });
+    
+    // Update pause label
+    this.pauseLabel?.setFontSize(buttonFontSize);
+    
+    // Update pheromone icons size
+    const iconFontSize = Math.round(16 * scaleFactor);
+    this.pheromoneIcons.forEach(icon => {
+      icon?.setFontSize(iconFontSize);
+    });
   }
   
   public destroy(): void {

@@ -279,14 +279,14 @@ export class Monster {
     this.updateFallDamage(deltaTime);
     this.updateStuckDetection(deltaTime);
 
-    // Update rest system
+    // Energy system removed - monsters always have energy!
+    this.energy = 100;
+
+    // Update rest system (but no energy impact)
     this.updateRest(deltaTime);
 
-    // Update energy consumption
-    this.updateEnergy(deltaTime);
-
-    // Die if no energy or too old
-    if (this.energy <= 0 || this.shouldDieFromAge()) {
+    // Die only from age
+    if (this.shouldDieFromAge()) {
       this.state = MonsterState.DEAD;
       this.die();
       return;
@@ -332,7 +332,7 @@ export class Monster {
       if (fallDistance > 100 && isCarrying) { // Significant fall while carrying
         const damage = Math.floor(fallDistance / 50); // 1 damage per 50 pixels
         this.stats.currentHealth -= damage;
-        this.energy -= damage * 5; // Also lose energy
+        // Energy system removed - no energy loss from falls
         
         console.log(`${this.id} took ${damage} fall damage! (fell ${Math.floor(fallDistance)} pixels while carrying)`);
         
@@ -473,7 +473,7 @@ export class Monster {
    * Handle monster death
    */
   private die(): void {
-    console.log(`Monster ${this.id} has died (age: ${Math.floor(this.age)}s, energy: ${Math.floor(this.energy)}%)`);
+    console.log(`Monster ${this.id} has died (age: ${Math.floor(this.age)}s)`);
     
     // Drop any carried items
     this.dropCarriedItem();
@@ -487,38 +487,11 @@ export class Monster {
   }
 
   /**
-   * Update energy based on activity and genetics
+   * Energy system removed - monsters always have 100% energy!
    */
   private updateEnergy(deltaTime: number): void {
-    const baseConsumption = 0.1; // MUCH lower energy consumption
-    const metabolismEfficiency = (this.stats.energyEfficiency / 255) * 0.3 + 0.7; // 70-100% efficiency
-    
-    let activityMultiplier = 1;
-    switch (this.state) {
-      case MonsterState.MINING:
-        activityMultiplier = 1.2; // Reduced from 2
-        break;
-      case MonsterState.FIGHTING:
-        activityMultiplier = 1.5; // Reduced from 3
-        break;
-      case MonsterState.MOVING:
-        activityMultiplier = 1.1; // Reduced from 1.5
-        break;
-      case MonsterState.IDLE:
-        activityMultiplier = 0.1; // Very low idle consumption
-        break;
-      case MonsterState.RESTING:
-        activityMultiplier = -0.5; // Actually RECOVER energy while resting
-        break;
-    }
-
-    const energyChange = baseConsumption * activityMultiplier * (2 - metabolismEfficiency) * deltaTime;
-    this.energy = Math.max(0, Math.min(100, this.energy - energyChange));
-
-    // Always recover energy when resting or idle
-    if (this.state === MonsterState.RESTING || this.state === MonsterState.IDLE) {
-      this.energy = Math.min(100, this.energy + 5 * deltaTime); // Fast recovery
-    }
+    // Energy system removed - always keep at 100%
+    this.energy = 100;
   }
 
   /**
@@ -555,24 +528,18 @@ export class Monster {
       });
     }
 
-    // 2. CRITICAL PRIORITY: Energy emergency
-    if (this.energy < 15) {
-      this.addTask({
-        id: `energy_emergency_${Date.now()}`,
-        priority: TaskPriority.CRITICAL,
-        type: MonsterAction.RETURN_HOME,
-        description: 'Energy critical - return to hive',
-        createdAt: Date.now(),
-        userGenerated: false
-      });
-    }
+    // Energy system removed - no energy emergencies
 
-    // 3. Check for USER PHEROMONE COMMANDS (HIGH PRIORITY)
+    // 3. HIGHEST OPERATIONAL PRIORITY: Collect nearby loose resources first!
+    // Resources on ground should ALWAYS be collected before mining new ones
+    // This is checked in GameScene.tryToCarryResource() but we need to prioritize it here
+    
+    // 4. Check for USER PHEROMONE COMMANDS (prioritize NEAREST pheromones)
     if (pheromoneSystem) {
       this.checkForUserPheromones(pheromoneSystem, world);
     }
 
-    // 4. MEDIUM PRIORITY: Breeding
+    // 5. MEDIUM PRIORITY: Breeding
     if (this.canBreed()) {
       this.addTask({
         id: `breeding_${Date.now()}`,
@@ -590,6 +557,7 @@ export class Monster {
 
   /**
    * Check for user-placed pheromones nearby (HIGH PRIORITY)
+   * ALWAYS prioritize NEAREST pheromones to avoid confusion
    */
   private checkForUserPheromones(pheromoneSystem: PheromoneSystem, world?: Tile[][]): void {
     // Check every 2 seconds to avoid spam
@@ -601,17 +569,23 @@ export class Monster {
     const tileX = Math.floor(this.position.x / TILE_SIZE);
     const tileY = Math.floor(this.position.y / TILE_SIZE);
     
-    // Look for MINE_HERE pheromones in a wider area (5x5)
+    // Look for MINE_HERE pheromones in a HUGE area (40x40) to find even deep pheromones!
+    // Then choose the NEAREST one - never a far one when there's a close one!
     let closestMineTarget: {x: number, y: number, distance: number} | null = null;
     
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -20; dx <= 20; dx++) {
+      for (let dy = -20; dy <= 20; dy++) {
         const checkTileX = tileX + dx;
         const checkTileY = tileY + dy;
         
         // Check if there's a MINE_HERE pheromone at this location
         if (pheromoneSystem.hasPheromone(checkTileX, checkTileY, PheromoneType.MINE_HERE)) {
-          const distance = Math.abs(dx) + Math.abs(dy);
+          // Use actual Euclidean distance for accurate nearest selection
+          const worldDx = (checkTileX * TILE_SIZE) - this.position.x;
+          const worldDy = (checkTileY * TILE_SIZE) - this.position.y;
+          const distance = Math.sqrt(worldDx * worldDx + worldDy * worldDy);
+          
+          // ALWAYS pick the NEAREST pheromone, not just any random one
           if (!closestMineTarget || distance < closestMineTarget.distance) {
             closestMineTarget = {x: checkTileX, y: checkTileY, distance};
           }
@@ -635,15 +609,15 @@ export class Monster {
       };
       this.miningDepth = 0;
       
-      // Add high-priority mining task
+      // Add high-priority mining task - NEVER EXPIRES until complete!
       this.addTask({
         id: `user_mine_${closestMineTarget.x}_${closestMineTarget.y}`,
         priority: TaskPriority.HIGH,
         type: MonsterAction.MINE_NEARBY,
         target: { x: worldX, y: worldY },
-        description: `USER COMMAND: Mine at (${closestMineTarget.x}, ${closestMineTarget.y})`,
+        description: `USER COMMAND: Mine NEAREST at (${closestMineTarget.x}, ${closestMineTarget.y}) - ${Math.round(closestMineTarget.distance)}px away`,
         createdAt: Date.now(),
-        expiresAt: Date.now() + 60000, // 60 second timeout
+        expiresAt: Date.now() + 300000, // 5 MINUTE timeout (was 1 minute) - VERY determined!
         userGenerated: true
       });
     }
@@ -763,7 +737,7 @@ export class Monster {
     if (this.stats.aggressionLevel > aggressionThreshold) {
       this.currentAction = MonsterAction.ATTACK_ENEMY;
       this.state = MonsterState.FIGHTING;
-    } else if (this.stats.aggressionLevel < fleeThreshold || this.energy < 50) {
+    } else if (this.stats.aggressionLevel < fleeThreshold) {
       this.currentAction = MonsterAction.FLEE_DANGER;
       this.state = MonsterState.FLEEING;
     } else {
@@ -979,7 +953,11 @@ export class Monster {
     const distance = Math.sqrt(dx * dx + dy * dy);
 
     if (distance > 2) {
-      const speed = (this.stats.moveSpeed / 255) * 50 * speedMultiplier; // Convert to pixels per second
+      let speed = (this.stats.moveSpeed / 255) * 50 * speedMultiplier; // Convert to pixels per second
+      
+      // Apply weight slowdown if carrying something heavy
+      const carryingWeightMultiplier = (this as any).carryingWeightMultiplier || 1.0;
+      speed *= carryingWeightMultiplier;
       
       // ONLY set velocity - let physics system handle position with collision detection
       this.position.vx = (dx / distance) * speed;
@@ -1019,7 +997,7 @@ export class Monster {
     // Monsters must be at least 30 seconds old before they can breed (explore first!)
     const age = Date.now() - this.genetics.birthTime;
     const minBreedingAge = 30000; // 30 seconds
-    return status === BreedingStatus.READY && this.energy > 60 && age >= minBreedingAge;
+    return status === BreedingStatus.READY && age >= minBreedingAge;
   }
   
   /**
@@ -1138,8 +1116,8 @@ export class Monster {
    */
   getCombatPower(): number {
     const healthRatio = this.stats.currentHealth / this.stats.maxHealth;
-    const energyRatio = this.energy / 100;
-    return this.stats.attackPower * healthRatio * energyRatio;
+    // Energy system removed - always at full power
+    return this.stats.attackPower * healthRatio;
   }
 
   /**
@@ -1194,10 +1172,10 @@ export class Monster {
   }
 
   /**
-   * Check if monster needs rest based on energy level
+   * Energy system removed - monsters never need rest for energy
    */
   shouldSeekRest(): boolean {
-    return this.energy <= this.energyThreshold;
+    return false; // Never need rest for energy anymore
   }
 
   /**
@@ -1216,20 +1194,17 @@ export class Monster {
   }
 
   /**
-   * Update rest and energy recovery
+   * Energy system removed - no energy recovery needed
    */
   updateRest(deltaTime: number): void {
+    // Energy system removed - always have energy
+    this.energy = 100;
+    
     if (this.state === MonsterState.RESTING || this.state === MonsterState.SLEEPING) {
       this.restTimer += deltaTime;
       
-      // Energy recovery rates
-      const baseRecovery = 5 * deltaTime; // 5 energy per second base
-      const hiveBonus = this.isRestingAtHive ? 10 : 1; // 10x faster at hive
-      
-      this.energy = Math.min(100, this.energy + (baseRecovery * hiveBonus));
-      
-      // Check if fully rested
-      if (this.energy >= 80) { // Rest until 80% energy
+      // Just stop resting after a short while
+      if (this.restTimer >= 2) { // 2 seconds of rest is enough
         this.stopResting();
       }
     }

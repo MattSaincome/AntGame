@@ -5,7 +5,8 @@ export enum PheromoneType {
   DO_NOT_MINE = 'do_not_mine',
   MINE_HERE = 'mine_here',
   SAFE_ZONE = 'safe_zone',
-  DANGER_ZONE = 'danger_zone'
+  DANGER_ZONE = 'danger_zone',
+  ATTACK_DEFEND = 'attack_defend'
 }
 
 export interface PheromoneMarker {
@@ -36,10 +37,28 @@ export class PheromoneSystem {
 
   /**
    * Add a pheromone marker at a specific tile location
+   * If a pheromone already exists at this location, STACK the strength and increase radius!
    */
   addPheromone(tileX: number, tileY: number, type: PheromoneType, 
                strength: number = 100, decay: number = 0, playerPlaced: boolean = true): string {
     
+    // Check if a pheromone of the same type already exists at this location
+    const existing = this.getPheromoneAt(tileX, tileY);
+    
+    if (existing && existing.type === type) {
+      // STACK THE STRENGTH! Each click makes it more urgent!
+      const oldStrength = existing.strength;
+      existing.strength = Math.min(500, existing.strength + strength); // Cap at 500 (5x base)
+      existing.timestamp = Date.now(); // Reset timestamp
+      
+      // Update visual to show increased urgency
+      this.updatePheromoneVisual(existing);
+      
+      console.log(`🔥 STACKED ${type} pheromone at (${tileX}, ${tileY}): ${oldStrength} → ${existing.strength} (${Math.floor(existing.strength/100)}x urgency!)`);
+      return existing.id;
+    }
+    
+    // No existing pheromone - create new one
     const pheromoneId = `pheromone_${this.pheromoneIdCounter++}`;
     const worldX = tileX * TILE_SIZE + TILE_SIZE / 2;
     const worldY = tileY * TILE_SIZE + TILE_SIZE / 2;
@@ -195,6 +214,7 @@ export class PheromoneSystem {
 
   /**
    * Update visual appearance based on pheromone properties
+   * Stronger pheromones have BIGGER RADIUS and more visibility!
    */
   private updatePheromoneVisual(pheromone: PheromoneMarker): void {
     const visual = this.pheromoneSprites.get(pheromone.id);
@@ -206,50 +226,65 @@ export class PheromoneSystem {
     visual.x = pheromone.x;
     visual.y = pheromone.y;
     
-    // Calculate alpha based on strength
-    const alpha = (pheromone.strength / 100) * 0.7; // Max 70% opacity
+    // Calculate alpha based on strength - stronger = more visible
+    const strengthMultiplier = Math.min(5, pheromone.strength / 100); // 1x to 5x
+    const alpha = Math.min(0.9, strengthMultiplier * 0.3); // More visible when stronger
+    
+    // Calculate radius based on strength - GROWS with each click!
+    const baseRadius = TILE_SIZE / 2;
+    const radiusMultiplier = 1 + (strengthMultiplier - 1) * 0.5; // 1x to 3x size
+    const radius = baseRadius * radiusMultiplier;
     
     // Different colors and shapes for different pheromone types
     switch (pheromone.type) {
       case PheromoneType.DO_NOT_MINE:
-        // Red X pattern for "do not mine"
-        visual.lineStyle(2, 0xFF4444, alpha);
-        visual.moveTo(-6, -6);
-        visual.lineTo(6, 6);
-        visual.moveTo(-6, 6);
-        visual.lineTo(6, -6);
+        // Red X pattern for "do not mine" - GROWS with strength!
+        const xSize = radius * 0.7;
+        visual.lineStyle(2 * radiusMultiplier, 0xFF4444, alpha);
+        visual.moveTo(-xSize, -xSize);
+        visual.lineTo(xSize, xSize);
+        visual.moveTo(-xSize, xSize);
+        visual.lineTo(xSize, -xSize);
         
-        // Red border around tile
+        // Red border around tile - EXPANDS with urgency!
         visual.lineStyle(1, 0xFF4444, alpha * 0.5);
-        visual.strokeRect(-TILE_SIZE/2, -TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
+        visual.strokeRect(-radius, -radius, radius * 2, radius * 2);
         break;
         
       case PheromoneType.MINE_HERE:
-        // Green mining pick icon
-        visual.lineStyle(2, 0x44FF44, alpha);
-        visual.moveTo(-4, 4);
-        visual.lineTo(0, -4);
-        visual.lineTo(4, 4);
+        // Green mining pick icon - GROWS with urgency!
+        const pickSize = radius * 0.5;
+        visual.lineStyle(2 * radiusMultiplier, 0x44FF44, alpha);
+        visual.moveTo(-pickSize, pickSize);
+        visual.lineTo(0, -pickSize);
+        visual.lineTo(pickSize, pickSize);
         
-        // Green highlight around tile
-        visual.fillStyle(0x44FF44, alpha * 0.2);
-        visual.fillRect(-TILE_SIZE/2, -TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
+        // Green highlight around tile - EXPANDS to show increased priority!
+        visual.fillStyle(0x44FF44, alpha * 0.3);
+        visual.fillRect(-radius, -radius, radius * 2, radius * 2);
+        
+        // Add pulsing ring for high urgency (3x+)
+        if (strengthMultiplier >= 3) {
+          visual.lineStyle(3, 0x44FF44, alpha * 0.8);
+          visual.strokeCircle(0, 0, radius * 1.2);
+        }
         break;
         
       case PheromoneType.SAFE_ZONE:
-        // Blue circle for safe zone
+        // Blue circle for safe zone - GROWS with strength!
         visual.fillStyle(0x4444FF, alpha * 0.3);
-        visual.fillCircle(0, 0, TILE_SIZE/3);
-        visual.lineStyle(1, 0x4444FF, alpha);
-        visual.strokeCircle(0, 0, TILE_SIZE/3);
+        visual.fillCircle(0, 0, radius * 0.7);
+        visual.lineStyle(radiusMultiplier, 0x4444FF, alpha);
+        visual.strokeCircle(0, 0, radius * 0.7);
         break;
         
       case PheromoneType.DANGER_ZONE:
-        // Orange/yellow warning triangle
+        // Orange/yellow warning triangle - GROWS with urgency!
+        const triSize = radius * 0.7;
         visual.fillStyle(0xFF8800, alpha * 0.3);
-        visual.fillTriangle(0, -6, -6, 6, 6, 6);
-        visual.lineStyle(2, 0xFF8800, alpha);
-        visual.strokeTriangle(0, -6, -6, 6, 6, 6);
+        visual.fillTriangle(0, -triSize, -triSize, triSize, triSize, triSize);
+        visual.lineStyle(2 * radiusMultiplier, 0xFF8800, alpha);
+        visual.strokeTriangle(0, -triSize, -triSize, triSize, triSize, triSize);
         break;
     }
   }
@@ -292,5 +327,15 @@ export class PheromoneSystem {
       }
     }
     return count;
+  }
+  
+  /**
+   * Clear all pheromones from the map
+   */
+  clearAllPheromones(): void {
+    const count = this.pheromones.size;
+    const allIds = Array.from(this.pheromones.keys());
+    allIds.forEach(id => this.removePheromone(id));
+    console.log(`Cleared all pheromones (${count} removed)`);
   }
 }

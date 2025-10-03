@@ -15,7 +15,6 @@ import { TrueProceduralPartsRenderer } from '../systems/TrueProceduralPartsRende
 import { MonsterSelectionUI } from '../ui/MonsterSelectionUI';
 import { BreedingManager } from '../systems/BreedingManager';
 import { MonsterLifeStage } from '../genetics/GeneticsTypes';
-import { RTSHud } from '../ui/RTSHud';
 import { MonsterType } from '../genetics/GeneticsTypes';
 import { TerrariaTileRenderer } from '../systems/TerrariaTileRenderer';
 import { ProceduralMovementSystem } from '../systems/ProceduralMovementSystem';
@@ -39,17 +38,15 @@ export class GameScene extends Phaser.Scene {
   private resourceChunkManager!: ResourceChunkManager;
   private miningEffects!: MiningEffects;
   private pheromoneSystem!: PheromoneSystem;
-  private selectedPheromone: PheromoneType = PheromoneType.MINE_HERE;
-  private speedText!: Phaser.GameObjects.Text;
-  private populationText!: Phaser.GameObjects.Text;
-  private waveTimerText!: Phaser.GameObjects.Text;
+  private selectedPheromone: PheromoneType | 'ERASER' | 'CLEAR_ALL' = PheromoneType.MINE_HERE;
+  private selectedBuildItem: string | null = null;
+  // UI moved to UIScene
   
   // New genetics and breeding systems
   private monsterSpriteRenderer!: TrueProceduralPartsRenderer;
   private monsterSelectionUI!: MonsterSelectionUI;
   private breedingManager!: BreedingManager;
   private selectedMonster: Monster | null = null;
-  private rtsHud!: RTSHud;
   
   // Terraria-style tile renderer with edge detection
   private tileRenderer!: TerrariaTileRenderer;
@@ -109,6 +106,9 @@ export class GameScene extends Phaser.Scene {
   }
   create() {
     console.log('Creating game scene...');
+    
+    // Launch UI Scene in parallel (separate fixed camera for HUD)
+    this.scene.launch('UIScene');
     
     // Initialize bug monitoring system
     bugMonitor.init();
@@ -176,9 +176,6 @@ export class GameScene extends Phaser.Scene {
     // Initialize ragdoll physics system for realistic limb animations
     this.ragdollPhysics = new RagdollPhysicsSystem(this);
     
-    // Initialize RTS HUD with pheromone and speed controls
-    this.rtsHud = new RTSHud(this, this.pheromoneSystem);
-    
     // Add initial pheromones to guide mining behavior
     this.addInitialMiningPheromones();
     
@@ -190,9 +187,46 @@ export class GameScene extends Phaser.Scene {
     // Set up RTS HUD event handlers
     this.events.on('gameSpeedChanged', (speed: number) => {
       this.gameSpeed = speed;
-      this.speedText.setText(`Speed: ${speed.toFixed(1)}x`);
+      // Emit to UIScene
+      this.events.emit('updateSpeed', speed);
       console.log(`Game speed changed to: ${speed}x`);
     });
+    
+    // Speed buttons from UIScene
+    this.events.on('setSpeed', (speed: number) => {
+      this.gameSpeed = speed;
+      this.events.emit('updateSpeed', speed);
+      console.log(`Speed set to: ${speed}x`);
+    });
+    
+    // Pheromone selection from UIScene
+    this.events.on('pheromoneSelected', (type: PheromoneType | 'ERASER' | 'CLEAR_ALL') => {
+      this.selectedPheromone = type;
+      this.selectedBuildItem = null; // Clear build selection
+      console.log(`Selected pheromone: ${type}`);
+      
+      // If CLEAR_ALL selected, clear immediately
+      if (type === 'CLEAR_ALL') {
+        this.pheromoneSystem.clearAllPheromones();
+        console.log('🧹 Cleared all pheromones from map!');
+      }
+    });
+    
+    // Build item selection from UIScene
+    this.events.on('buildItemSelected', (itemId: string) => {
+      this.selectedBuildItem = itemId;
+      this.selectedPheromone = PheromoneType.MINE_HERE; // Reset pheromone when building
+      console.log(`Selected build item: ${itemId}`);
+    });
+    
+    // Give starting resources (RTS style)
+    this.resourceTracker.addResources(TileType.DIRT, 10);
+    this.resourceTracker.addResources(TileType.STONE, 3);
+    
+    // Send initial UI updates to UIScene
+    this.events.emit('updateSpeed', this.gameSpeed);
+    this.events.emit('updateResources', this.resourceTracker.getResources());
+    this.events.emit('updatePopulation', 0, this.resourceTracker.maxPopulation);
     
     // REMOVED: No longer protecting hive with "do not mine" pheromones
     // this.pheromoneSystem.protectHivePlatform(hiveX, hiveY);
@@ -211,12 +245,84 @@ export class GameScene extends Phaser.Scene {
   update(time: number, deltaTime: number) {
     const dt = (deltaTime / 1000) * this.gameSpeed; // Convert to seconds and apply game speed
     
+    // Update HUDs to follow camera and respond to zoom
+    this.resourceTracker.update();
+    
     // Monitor frame performance for crash prevention
     bugMonitor.monitorFramePerformance();
     
     // Monitor memory usage
     bugMonitor.monitorMemoryUsage(this.monsters.length, 'monsters');
     bugMonitor.monitorMemoryUsage(this.resourceChunkManager.getAllChunks().length, 'resource_chunks');
+    
+    // ═══════════════════════════════════════════════════════════
+    // 🐛 FOCUSED DEBUG SYSTEM - Issues We're Tracking
+    // ═══════════════════════════════════════════════════════════
+    if (time % 5000 < 50) { // Every 5 seconds
+      console.log('\n\n📊 ═══════════ MONSTER STATUS REPORT ═══════════');
+      
+      // Count different monster states
+      let flying = 0, grounded = 0, mining = 0, carrying = 0, stuck = 0;
+      let leadMiners = 0;
+      let insideBlocks = 0;
+      let walkingOnAir = 0;
+      
+      for (const m of this.monsters) {
+        const canFly = (m as any).genes?.canFly || false;
+        
+        if (canFly) flying++;
+        if (m.position.onGround) grounded++;
+        if (m.state === MonsterState.MINING) mining++;
+        if (m.carryingChunkId || m.helpingCarryChunkId) carrying++;
+        if (Math.abs(m.position.vx) < 1 && Math.abs(m.position.vy) < 1) stuck++;
+        
+        // Check if lead miner
+        if ((m as any).isLeadMiner && (m as any).leadMinerUntil && Date.now() < (m as any).leadMinerUntil) {
+          leadMiners++;
+        }
+        
+        // Check inside blocks
+        const tileX = Math.floor(m.position.x / TILE_SIZE);
+        const tileY = Math.floor(m.position.y / TILE_SIZE);
+        if (tileX >= 0 && tileX < WORLD_WIDTH && tileY >= 0 && tileY < WORLD_HEIGHT) {
+          const tile = this.world[tileX][tileY];
+          if (tile && TILE_PROPERTIES[tile.type].solid) {
+            insideBlocks++;
+          }
+        }
+        
+        // Check walking on air
+        if (m.position.onGround && !canFly) {
+          const feetY = Math.floor((m.position.y + 20) / TILE_SIZE);
+          let hasGround = false;
+          for (let checkY = feetY; checkY <= feetY + 1; checkY++) {
+            if (checkY >= 0 && checkY < WORLD_HEIGHT) {
+              const tile = this.world[tileX][checkY];
+              if (tile && TILE_PROPERTIES[tile.type].solid) {
+                hasGround = true;
+                break;
+              }
+            }
+          }
+          if (!hasGround) walkingOnAir++;
+        }
+      }
+      
+      console.log(`👥 Total Monsters: ${this.monsters.length}`);
+      
+      // Update HUD population counter
+      this.resourceTracker.updatePopulation(this.monsters.length, 200);
+      console.log(`✈️  Flying: ${flying}`);
+      console.log(`🦶 Grounded: ${grounded}`);
+      console.log(`⛏️  Mining: ${mining}`);
+      console.log(`📦 Carrying: ${carrying}`);
+      console.log(`🐌 Stuck/Slow: ${stuck}`);
+      console.log(`\n🎯 ISSUES:`);
+      console.log(`   ⛏️  Lead Miners Active: ${leadMiners} ${leadMiners === 0 ? '❌ NONE!' : '✅'}`);
+      console.log(`   🧱 Inside Blocks: ${insideBlocks} ${insideBlocks > 0 ? '❌ BUG!' : '✅'}`);
+      console.log(`   🌊 Walking on Air: ${walkingOnAir} ${walkingOnAir > 0 ? '❌ BUG!' : '✅'}`);
+      console.log('═══════════════════════════════════════════════\n\n');
+    }
     
     // Check for stuck monsters and apply recovery
     if (time % 2000 === 0) { // Check every 2 seconds
@@ -249,9 +355,6 @@ export class GameScene extends Phaser.Scene {
     
     // Update UI
     this.updateUI();
-    
-    // Update RTS HUD with current game speed
-    this.rtsHud.updateGameSpeed(this.gameSpeed);
     
     // Re-render world if needed (only visible area for performance)
     if (time % 100 === 0) { // Every 100ms
@@ -343,140 +446,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createUI(): void {
-    // Note: RTSHud now handles pheromone and speed controls
-    // We still need these temporary text elements for population and wave timer
-    // until they're integrated into the RTSHud
-    
-    // TOP LEFT - Population counter
-    this.populationText = this.add.text(20, 120, 'Population: 0', {
-      fontSize: '16px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      backgroundColor: '#000000',
-      padding: { x: 8, y: 4 }
-    });
-    this.populationText.setScrollFactor(0);
-    this.populationText.setDepth(2000);
-
-    // Wave timer
-    this.waveTimerText = this.add.text(20, 50, 'Next Wave: 2:00', {
-      fontSize: '16px',
-      color: '#ff4444',
-      fontFamily: 'Arial, sans-serif',
-      backgroundColor: '#000000',
-      padding: { x: 8, y: 4 }
-    });
-    this.waveTimerText.setScrollFactor(0);
-    this.waveTimerText.setDepth(2000);
-
-    // Create speed control text
-    this.speedText = this.add.text(this.cameras.main.width - 100, 50, 'Speed: 1.5x', {
-      fontSize: '16px',
-      color: '#00ff00'
-    });
-    this.speedText.setScrollFactor(0);
-    this.speedText.setDepth(100000);
-    
-    // Create evolution stats display
-    this.createEvolutionStatsDisplay();
-    
-    // TOP RIGHT - Resource display (detailed)
-    this.createResourceDisplay();
-
-    // Bottom HUD panel
-    this.createBottomHUD();
+    // UI moved to UIScene - nothing to create here
   }
 
-  private createEvolutionStatsDisplay(): void {
-    // Create gene pool stats display
-    const seedInfo = this.seedPartLoader.getCurrentSeeds();
-    const totalMonsters = seedInfo[0].monsterSets.length + seedInfo[1].monsterSets.length;
-    
-    this.add.text(20, 80, 'Gene Pools (2 Mixed)', {
-      fontSize: '14px',
-      color: '#00ffff',
-      fontStyle: 'bold'
-    }).setScrollFactor(0).setDepth(2000);
-    
-    const evolutionText = this.add.text(20, 100, [
-      `Pools: ${seedInfo[0].name} + ${seedInfo[1].name}`,
-      `Monster Types: ${totalMonsters}`,
-      `Parts Loaded: ~${totalMonsters * 7}` // Estimate ~7 parts per monster
-    ], {
-      fontSize: '12px',
-      color: '#ffffff'
-    });
-    evolutionText.setScrollFactor(0);
-    evolutionText.setDepth(2000);
-    
-    // Add generation counter
-    let generation = 0;
-    let babiesBorn = 0;
-    // HUD/debug display for gene pools
-    const seedDebugText = this.add.text(10, 350, '', { 
-      fontSize: '10px', 
-      color: '#00ff00' 
-    });
-    
-    if (this.seedPartLoader && this.seedPartLoader.getCurrentSeeds) {
-      const seeds = this.seedPartLoader.getCurrentSeeds();
-      seedDebugText.setText([
-        `Gene Pools: ${seeds[0].name} + ${seeds[1].name}`,
-        `Monsters: ${seeds[0].monsterSets.length + seeds[1].monsterSets.length} types`
-      ]);
-    }
-    // Store references for updating
-    (this as any).generationCounter = { generation, babiesBorn, increment: () => babiesBorn++ };
-  }
+  // UI moved to UIScene
   
-  private createResourceDisplay(): void {
-    const startX = this.scale.width - 200;
-    const startY = 20;
-    
-    // Background for resources
-    const resourceBG = this.add.rectangle(startX + 80, startY + 60, 160, 120, 0x000000, 0.8);
-    resourceBG.setScrollFactor(0);
-    resourceBG.setDepth(1999);
-    
-    // Resource title
-    this.add.text(startX, startY, 'RESOURCES', {
-      fontSize: '14px',
-      color: '#00ffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      backgroundColor: '#000000',
-      padding: { x: 6, y: 3 }
-    }).setScrollFactor(0).setDepth(2000);
+  // UI moved to UIScene
 
-    // Individual resource counters
-    const resources = [
-      { name: 'Dirt', color: '#8B4513' },
-      { name: 'Stone', color: '#696969' },
-      { name: 'Copper', color: '#CD853F' },
-      { name: 'Iron', color: '#4682B4' },
-      { name: 'Gold', color: '#FFD700' },
-      { name: 'Crystal', color: '#9370DB' }
-    ];
-
-    resources.forEach((resource, index) => {
-      this.add.text(startX, startY + 25 + (index * 15), `${resource.name}: 0`, {
-        fontSize: '12px',
-        color: resource.color,
-        fontFamily: 'Arial, sans-serif',
-        backgroundColor: '#000000',
-        padding: { x: 4, y: 2 }
-      }).setScrollFactor(0).setDepth(2000);
-    });
-  }
-
-  private createBottomHUD(): void {
-    // RTSHud now handles all bottom HUD functionality including pheromone and speed controls
-    // This method is kept for backward compatibility but is now empty
-    // The RTSHud was initialized in create() and provides:
-    // - Pheromone command panel with 4 pheromone types
-    // - Speed control panel with speed buttons and pause
-    // - Professional StarCraft-style interface
-  }
+  // UI moved to UIScene
   
   /**
    * Add initial pheromones to guide mining behavior
@@ -564,21 +541,21 @@ export class GameScene extends Phaser.Scene {
     // Speed controls
     if (Phaser.Input.Keyboard.JustDown(this.keys.MINUS)) {
       this.gameSpeed = Math.max(0.25, this.gameSpeed - 0.25);
-      this.speedText.setText(`Speed: ${this.gameSpeed.toFixed(1)}x`);
+      this.events.emit('updateSpeed', this.gameSpeed);
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.PLUS) || Phaser.Input.Keyboard.JustDown(this.keys.EQUALS)) {
       this.gameSpeed = Math.min(5.0, this.gameSpeed + 0.25);
-      this.speedText.setText(`Speed: ${this.gameSpeed.toFixed(1)}x`);
+      this.events.emit('updateSpeed', this.gameSpeed);
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.ONE)) {
       this.gameSpeed = 1.0;
-      this.speedText.setText(`Speed: ${this.gameSpeed.toFixed(1)}x`);
+      this.events.emit('updateSpeed', this.gameSpeed);
     }
     
     // Pause/unpause
     if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
       this.gameSpeed = this.gameSpeed === 0 ? 1 : 0;
-      this.speedText.setText(`Speed: ${this.gameSpeed.toFixed(1)}x`);
+      this.events.emit('updateSpeed', this.gameSpeed);
     }
     
     // Breeding interface (placeholder)
@@ -601,10 +578,11 @@ export class GameScene extends Phaser.Scene {
         return false;
       }
       
-      // Handle rest and energy management FIRST - highest priority!
-      this.handleMonsterRest(monster, deltaTime);
+      // Energy system removed - monsters always have energy!
+      // Ensure energy is always at 100%
+      monster.energy = 100;
       
-      // Only do other activities if not resting
+      // Normal activities
       if (!monster.isResting()) {
         // Update exploration behavior first - primary activity!
         monster.updateExploration(deltaTime);
@@ -643,6 +621,9 @@ export class GameScene extends Phaser.Scene {
       this.handlePyramidClimbing(monster);
       
       this.applyPhysics(monster, deltaTime);
+      
+      // PUSH STUCK MONSTERS - Help them get unstuck via collision
+      this.handleMonsterPushing(monster, deltaTime);
       
       // Update sprite and animate walking
       const sprite = this.monsterSprites.get(monster.id);
@@ -903,18 +884,35 @@ export class GameScene extends Phaser.Scene {
         
         // AUTO-RECOVERY: If stuck for more than 2 seconds, make them panic!
         if (timeDiff > 2) {
+          // CRITICAL: Prevent panic jump spam that causes wall climbing glitch
+          const currentTime = Date.now();
+          const lastPanicJump = (monster as any).lastPanicJumpTime || 0;
+          const timeSincePanicJump = currentTime - lastPanicJump;
+          
           console.log(`   🔧 AUTO-RECOVERY: Monster PANIC MODE!`);
           
           // PANIC MODE - Multiple safe recovery strategies
           const panicType = Math.random();
           
-          if (panicType < 0.25) {
+          if (panicType < 0.25 && timeSincePanicJump > 5000) { // 5 second cooldown on panic jumps
             // SAFE JUMP - max 3.5 blocks in any direction (56px = 3.5 * 16)
-            monster.position.onGround = false;
-            const maxJumpVelocity = 280; // Results in ~3.5 block jump
-            monster.position.vy = -200 - Math.random() * 80; // -200 to -280 (2-3.5 blocks up)
-            monster.position.vx = (Math.random() - 0.5) * maxJumpVelocity; // Max 3.5 blocks sideways
-            console.log(`   💥 Panic: Safe jump (max 3.5 blocks)!`);
+            // BUT ONLY if not against a wall (prevents wall climbing glitch)
+            const facingDir = Math.sign(monster.position.vx || 1);
+            const checkX = monsterTileX + facingDir;
+            const isAgainstWall = checkX >= 0 && checkX < WORLD_WIDTH &&
+                                  this.world[checkX][monsterTileY] &&
+                                  TILE_PROPERTIES[this.world[checkX][monsterTileY].type].solid;
+            
+            if (!isAgainstWall) {
+              monster.position.onGround = false;
+              const maxJumpVelocity = 280; // Results in ~3.5 block jump
+              monster.position.vy = -200 - Math.random() * 80; // -200 to -280 (2-3.5 blocks up)
+              monster.position.vx = (Math.random() - 0.5) * maxJumpVelocity; // Max 3.5 blocks sideways
+              (monster as any).lastPanicJumpTime = currentTime;
+              console.log(`   💥 Panic: Safe jump (max 3.5 blocks)!`);
+            } else {
+              console.log(`   🚫 Panic: Skip jump - against wall! Will try other recovery.`);
+            }
           } else if (panicType < 0.5) {
             // PANIC SHAKE - Break the block they're stuck against!
             console.log(`   🔨 Panic: SHAKE & BREAK!`);
@@ -994,25 +992,123 @@ export class GameScene extends Phaser.Scene {
         console.log(`   ID: ${monster.id.substring(0, 25)}`);
         console.log(`   Pos: (${monster.position.x.toFixed(0)}, ${monster.position.y.toFixed(0)}) Tile:[${monsterTileX},${monsterTileY}]`);
         console.log(`   Block type: ${this.world[monsterTileX][monsterTileY].type}`);
-        console.log(`   Velocity: vx=${monster.position.vx.toFixed(1)}, vy=${monster.position.vy.toFixed(1)}`);
-        console.log(`   OnGround: ${monster.position.onGround}`);
         
-        // AUTO-RECOVERY: Safely move monster out of solid block
-        console.log(`   🔧 AUTO-RECOVERY: Escaping from inside block...`);
+        // If carrying something, DROP IT first so we can mine!
+        const wasCarrying = monster.carryingChunkId || monster.helpingCarryChunkId;
+        if (wasCarrying) {
+          console.log(`   📦 Dropping carried item to mine out!`);
+          monster.carryingChunkId = null;
+          monster.helpingCarryChunkId = null;
+        }
         
-        // SAFE ESCAPE: Find nearest air tile (max 3 tiles away)
-        let airTileY = monsterTileY - 1;
-        while (airTileY >= 0) {
-          const tile = this.world[monsterTileX][airTileY];
-          if (!tile || tile.type === TileType.AIR) {
-            // Found air - teleport here
-            monster.position.y = airTileY * TILE_SIZE + TILE_SIZE / 2;
-            monster.position.onGround = false;
-            monster.position.vy = 0;
-            console.log(`   ✅ Teleported to air tile at Y=${airTileY}`);
-            break;
+        // SMART ESCAPE: Mine toward the hive (safest direction)!
+        const stuckTile = this.world[monsterTileX][monsterTileY];
+        
+        // Can't mine bedrock - teleport UP to surface!
+        if (stuckTile && stuckTile.type === TileType.BEDROCK) {
+          console.log(`   🚫 Stuck in BEDROCK at Y=${monsterTileY}! Teleporting UP to surface...`);
+          
+          // ALWAYS search UPWARD to find surface air, never stay in bedrock areas
+          let surfaceAir: {x: number, y: number} | null = null;
+          
+          // Search upward from current position to find safe surface air
+          for (let checkY = monsterTileY - 1; checkY >= 0; checkY--) {
+            const checkTile = this.world[checkY][monsterTileX];
+            // Find first air block that's NOT surrounded by bedrock
+            if (checkTile.type === TileType.AIR) {
+              // Check if this air is safe (not in bedrock layer)
+              const tileBelow = checkY < WORLD_HEIGHT - 1 ? this.world[checkY + 1][monsterTileX] : null;
+              if (!tileBelow || tileBelow.type !== TileType.BEDROCK) {
+                surfaceAir = {x: monsterTileX, y: checkY};
+                break; // Found safe air above bedrock
+              }
+            }
           }
-          airTileY--;
+          
+          if (surfaceAir) {
+            monster.position.x = surfaceAir.x * TILE_SIZE + TILE_SIZE / 2;
+            monster.position.y = surfaceAir.y * TILE_SIZE + TILE_SIZE / 2;
+            monster.position.vx = 0;
+            monster.position.vy = 0;
+            console.log(`   ✅ RESCUED from bedrock! Teleported UP to safe air at [${surfaceAir.x},${surfaceAir.y}] (was at Y=${monsterTileY})`);
+          } else {
+            // Failsafe: teleport to hive if can't find surface
+            const hivePos = this.colonyHive.getDepositPosition();
+            monster.position.x = hivePos.x;
+            monster.position.y = hivePos.y - 50;
+            monster.position.vx = 0;
+            monster.position.vy = 0;
+            console.log(`   🏠 EMERGENCY: Teleported to hive (couldn't find surface)`);
+          }
+          return; // Exit early - can't mine bedrock
+        }
+        
+        if (stuckTile && stuckTile.type !== TileType.AIR && stuckTile.type !== TileType.BEDROCK) {
+          console.log(`   ⛏️ MINING OUT: Breaking ${stuckTile.type} at [${monsterTileX},${monsterTileY}]`);
+          
+          // Drop resources if tile had any
+          if (stuckTile.resources > 0) {
+            this.resourceChunkManager.createChunksFromTile(
+              stuckTile.type,
+              monsterTileX,
+              monsterTileY,
+              stuckTile.resources
+            );
+          }
+          
+          // Turn tile into air - instant escape!
+          stuckTile.type = TileType.AIR;
+          stuckTile.integrity = 0;
+          stuckTile.resources = 0;
+          stuckTile.discovered = true;
+          
+          // Calculate direction TO HIVE (safest area)
+          const hivePos = this.colonyHive.getDepositPosition();
+          const dx = hivePos.x - monster.position.x;
+          const dy = hivePos.y - monster.position.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          // Normalize direction
+          const dirX = dx / distance;
+          const dirY = dy / distance;
+          
+          console.log(`   🏠 Escaping TOWARD HIVE: direction=(${dirX.toFixed(2)}, ${dirY.toFixed(2)})`);
+          
+          // Jump toward hive with force
+          monster.position.onGround = false;
+          monster.position.vx = dirX * 200; // Strong horizontal push toward hive
+          monster.position.vy = dirY * 150 - 100; // Vertical component + upward bias
+          
+          // Mine blocks in the direction of hive for next 2 blocks
+          for (let step = 1; step <= 2; step++) {
+            const mineX = Math.floor((monster.position.x + dirX * TILE_SIZE * step) / TILE_SIZE);
+            const mineY = Math.floor((monster.position.y + dirY * TILE_SIZE * step) / TILE_SIZE);
+            
+            if (mineX >= 0 && mineX < WORLD_WIDTH && mineY >= 0 && mineY < WORLD_HEIGHT) {
+              const blockingTile = this.world[mineX][mineY];
+              if (blockingTile && blockingTile.type !== TileType.AIR && blockingTile.type !== TileType.BEDROCK) {
+                console.log(`   💥 Clearing path to hive: Breaking ${blockingTile.type} at [${mineX},${mineY}]`);
+                
+                // Drop resources
+                if (blockingTile.resources > 0) {
+                  this.resourceChunkManager.createChunksFromTile(
+                    blockingTile.type,
+                    mineX,
+                    mineY,
+                    blockingTile.resources
+                  );
+                }
+                
+                // Clear the tile
+                blockingTile.type = TileType.AIR;
+                blockingTile.integrity = 0;
+                blockingTile.resources = 0;
+                blockingTile.discovered = true;
+              }
+            }
+          }
+          
+          console.log(`   ✅ Escape tunnel created toward hive!`);
         }
       }
       
@@ -1023,11 +1119,49 @@ export class GameScene extends Phaser.Scene {
         // In a pit with other monsters - try cooperative climbing!
         this.attemptCooperativeClimbing(monster, monsterTileX, monsterTileY);
       } else if (standingOnOthers && monster.position.onGround && !inDeepPit) {
-        // NOT in pit - regular anti-pileup (jump off)
-        console.log(`🦘 ANTI-PILEUP: Monster jumping off another monster!`);
-        monster.position.onGround = false;
-        monster.position.vy = -250; // Jump up
-        monster.position.vx = (Math.random() - 0.5) * 400; // Random horizontal
+        // EXPLOSIVE SEPARATION: Both monsters jump apart!
+        console.log(`🦘 ANTI-PILEUP: Monster using another as stepping stone!`);
+        
+        // Find the monster below us
+        let monsterBelow: any = null;
+        let minDistance = 100;
+        
+        for (const other of this.monsters) {
+          if (other.id === monster.id) continue;
+          
+          const dx = other.position.x - monster.position.x;
+          const dy = other.position.y - monster.position.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          
+          // Check if other monster is nearby (above or below)
+          if (Math.abs(dy) < 80 && Math.abs(dx) < 60 && dist < minDistance) {
+            monsterBelow = other;
+            minDistance = dist;
+          }
+        }
+        
+        if (monsterBelow) {
+          // FORCE BOTH MONSTERS APART!
+          const directionX = monster.position.x > monsterBelow.position.x ? 1 : -1;
+          
+          // Top monster: Jump UP and AWAY
+          monster.position.onGround = false;
+          monster.position.vy = -250; // Strong jump up
+          monster.position.vx = directionX * 350; // Jump off to side forcefully
+          console.log(`   ⬆️ Jumping UP and AWAY from monster!`);
+          
+          // Bottom monster: Gets pushed DOWN and opposite direction
+          monsterBelow.position.onGround = false;
+          monsterBelow.position.vy = 100; // Push down ("fall over")
+          monsterBelow.position.vx = -directionX * 300; // Push opposite way
+          console.log(`   ⬇️ Bottom monster pushed down and away!`);
+        } else {
+          // No specific monster - just jump away explosively
+          monster.position.onGround = false;
+          monster.position.vy = -250;
+          monster.position.vx = (Math.random() - 0.5) * 400;
+        }
+        
         (monster as any).positionHistory = []; // Reset history
       }
       
@@ -1323,24 +1457,42 @@ export class GameScene extends Phaser.Scene {
    * Handle monster exploration behavior - primary activity for autonomous monsters
    */
   private handleMonsterExploration(monster: Monster, deltaTime: number): void {
+    // Debug slow/stuck monsters - DISABLED to reduce spam
+    const isSlowMonster = false; // Was: Math.abs(monster.position.vx) < 2 && Math.abs(monster.position.vy) < 2;
+    
     // Skip exploration if monster is carrying resources or at rest
     if (monster.carryingChunkId || monster.helpingCarryChunkId || monster.isResting()) {
+      if (isSlowMonster) {
+        console.log(`🚫 ${monster.id.substring(0, 20)}: Skipping exploration - carrying=${!!monster.carryingChunkId}, helping=${!!monster.helpingCarryChunkId}, resting=${monster.isResting()}`);
+      }
       return;
     }
 
     // Set initial exploration target if monster doesn't have one
     if (!monster.getExplorationTarget()) {
       monster.setExplorationTarget();
+      if (isSlowMonster) {
+        console.log(`🎯 ${monster.id.substring(0, 20)}: Set NEW exploration target`);
+      }
     }
 
     const explorationTarget = monster.getExplorationTarget();
-    if (!explorationTarget) return;
+    if (!explorationTarget) {
+      if (isSlowMonster) {
+        console.log(`❌ ${monster.id.substring(0, 20)}: NO exploration target after setting!`);
+      }
+      return;
+    }
 
     // Check if monster should move toward exploration target
     const distanceToTarget = Math.sqrt(
       Math.pow(explorationTarget.x - monster.position.x, 2) + 
       Math.pow(explorationTarget.y - monster.position.y, 2)
     );
+
+    if (isSlowMonster) {
+      console.log(`📐 ${monster.id.substring(0, 20)}: Target=(${explorationTarget.x.toFixed(0)}, ${explorationTarget.y.toFixed(0)}), Distance=${distanceToTarget.toFixed(1)}`);
+    }
 
     // Move toward exploration target if far enough away
     if (distanceToTarget > 25) {
@@ -1349,24 +1501,47 @@ export class GameScene extends Phaser.Scene {
       const dy = (explorationTarget.y - monster.position.y) / distanceToTarget;
 
       // Check if the path toward target is clear before moving
-      const potentialX = monster.position.x + dx * speed * 60; // Check a bit ahead
-      const potentialY = monster.position.y + dy * speed * 60;
+      // FIXED: Check only 20 pixels ahead instead of 60 (was too far)
+      const potentialX = monster.position.x + dx * 20;
+      const potentialY = monster.position.y + dy * 20;
       
       if (!this.checkTileCollision(potentialX, potentialY)) {
         // Path is clear - set movement toward exploration target
-        monster.position.vx = dx * speed;
-        monster.position.vy = dy * speed;
+        const vx = dx * speed;
+        const vy = dy * speed;
+        monster.position.vx = vx;
+        monster.position.vy = vy;
         monster.target = explorationTarget;
         monster.state = MonsterState.MOVING;
+        
+        if (isSlowMonster) {
+          console.log(`✅ ${monster.id.substring(0, 20)}: SET VELOCITY vx=${vx.toFixed(2)}, vy=${vy.toFixed(2)}, speed=${speed.toFixed(3)}, dt=${deltaTime.toFixed(3)}`);
+        }
       } else {
-        // Path blocked - set new exploration target in different direction
-        monster.setExplorationTarget();
-        monster.position.vx = 0;
-        monster.position.vy = 0;
+        // Path blocked - DON'T spam new targets every frame
+        // Add cooldown: only change target once per second
+        const lastRetargetTime = (monster as any).lastRetargetTime || 0;
+        const now = Date.now();
+        
+        if (now - lastRetargetTime > 1000) { // 1 second cooldown
+          monster.setExplorationTarget();
+          (monster as any).lastRetargetTime = now;
+          
+          if (isSlowMonster) {
+            console.log(`🚧 ${monster.id.substring(0, 20)}: PATH BLOCKED at (${potentialX.toFixed(0)}, ${potentialY.toFixed(0)}), setting NEW target`);
+          }
+        }
+        
+        // Try to move around obstacle instead of stopping
+        monster.position.vx = dx * speed * 0.3; // Move slowly toward target
+        monster.position.vy = dy * speed * 0.3;
       }
     } else {
       // Reached exploration target - set new one
       monster.setExplorationTarget();
+      if (isSlowMonster) {
+        console.log(`🎯 ${monster.id.substring(0, 20)}: REACHED target, setting NEW one`);
+      }
     }
   }
 
@@ -1405,14 +1580,14 @@ export class GameScene extends Phaser.Scene {
       const tile = this.world[bestTile.x][bestTile.y];
       const miningPower = monster.stats.miningSpeed / 255;
       
-      // ULTRA FAST MINING - Each "hit" does massive damage
-      // Dirt (integrity 10-30) breaks in 1-2 hits
-      // Stone (integrity 30-50) breaks in 3-4 hits
-      const baseDamage = miningPower * 15; // Each hit does 15 damage at max mining speed
+      // AGGRESSIVE MINING - Each "hit" does massive damage
+      // Dirt (integrity 10-30) breaks in 1 hit
+      // Stone (integrity 30-50) breaks in 2 hits
+      const baseDamage = miningPower * 25; // INCREASED: Each hit does 25 damage (was 15)
       
-      // Add some randomness for excitement - sometimes monsters hit harder!
-      const criticalHit = Math.random() < 0.2; // 20% chance of critical hit
-      const superCrit = Math.random() < 0.05; // 5% chance of SUPER critical hit
+      // Add some randomness for excitement - monsters hit harder more often!
+      const criticalHit = Math.random() < 0.3; // 30% chance of critical hit (was 20%)
+      const superCrit = Math.random() < 0.1; // 10% chance of SUPER critical hit (was 5%)
       
       let damage = baseDamage;
       if (superCrit) {
@@ -1427,7 +1602,7 @@ export class GameScene extends Phaser.Scene {
       // Create mining animation on EVERY hit for satisfying feedback
       // But only apply damage at intervals to simulate "hits"
       const now = Date.now();
-      if (!monster.lastMiningHit || now - monster.lastMiningHit > 300) { // Hit every 0.3 seconds for faster, satisfying mining
+      if (!monster.lastMiningHit || now - monster.lastMiningHit > 200) { // FASTER: Hit every 0.2 seconds (was 0.3)
         monster.lastMiningHit = now;
         
         // Visual feedback for the hit
@@ -1441,6 +1616,12 @@ export class GameScene extends Phaser.Scene {
         
         // Apply the damage
         tile.integrity -= damage;
+        
+        // DEBUG: Log mining progress
+        if (Math.random() < 0.1) { // 10% of hits
+          const tileProps = TILE_PROPERTIES[tile.type];
+          console.log(`⛏️ Mining: ${tile.type} integrity ${tile.integrity.toFixed(1)}/${(tileProps.hardness * 10).toFixed(0)} (damage: ${damage.toFixed(1)})`);
+        }
         
         // Show spark effect for critical hits - more subtle and satisfying
         if (criticalHit || superCrit) {
@@ -1478,11 +1659,8 @@ export class GameScene extends Phaser.Scene {
             });
           }
         }
-      } else {
-        // Between hits, just show working animation without damage
-        return;
       }
-      
+        
       // Show block damage visually as it weakens
       if (tile.integrity > 0) {
         // Block is getting damaged - show cracks or damage
@@ -1536,8 +1714,31 @@ export class GameScene extends Phaser.Scene {
         this.renderTile(bestTile.x, bestTile.y);
         this.tileRenderer.updateAdjacentTiles(bestTile.x, bestTile.y, this.world, TILE_SIZE);
         
+        // CREATE 2-BLOCK-HIGH TUNNEL when mining horizontally TOWARD A PHEROMONE!
+        // Tunnels based on monster height (2 blocks) - only expand when there's a mining goal
+        if (monster.miningTarget && (monster.miningTarget.direction === 'left' || monster.miningTarget.direction === 'right')) {
+          // Check if there's a pheromone in the mining direction (mining toward goal)
+          const dirMultiplier = monster.miningTarget.direction === 'left' ? -1 : 1;
+          let foundPheromone = false;
+          for (let dist = 1; dist <= 3; dist++) {
+            const checkX = bestTile.x + (dist * dirMultiplier);
+            if (checkX >= 0 && checkX < WORLD_WIDTH) {
+              const pheromone = this.pheromoneSystem?.getPheromoneAt(checkX, bestTile.y);
+              if (pheromone && pheromone.type === PheromoneType.MINE_HERE && pheromone.strength > 10) {
+                foundPheromone = true;
+                break;
+              }
+            }
+          }
+          
+          // Only create 2-high tunnel if mining toward pheromone (based on monster height)
+          if (foundPheromone) {
+            this.expandTunnelVertically(bestTile.x, bestTile.y, monster);
+          }
+        }
+        
         // Monster feels accomplished after breaking a block
-        monster.energy = Math.min(100, monster.energy + 2); // Small energy boost from satisfaction
+        // Energy always at 100% - no need to boost
         
         // Brief pause to admire their work
         setTimeout(() => {
@@ -1551,6 +1752,53 @@ export class GameScene extends Phaser.Scene {
       if (monster.state === MonsterState.MINING) {
         monster.state = MonsterState.IDLE;
       }
+    }
+  }
+
+  /**
+   * Expand tunnel vertically to create 2-block-high tunnels (based on monster height)
+   * Clears 1 block above when mining horizontally - monsters only need 2 blocks high
+   */
+  private expandTunnelVertically(tileX: number, tileY: number, monster: Monster): void {
+    const blocksToExpand: Array<{x: number, y: number}> = [];
+    
+    // Only expand UPWARD - monsters are 2 blocks tall, don't need floor cleared
+    // Check block above
+    if (tileY > 0) {
+      const tileAbove = this.world[tileY - 1][tileX];
+      if (tileAbove && TILE_PROPERTIES[tileAbove.type].diggable && tileAbove.type !== TileType.AIR) {
+        blocksToExpand.push({x: tileX, y: tileY - 1});
+      }
+    }
+    
+    // Clear the additional blocks instantly (no mining time)
+    blocksToExpand.forEach(pos => {
+      const tile = this.world[pos.y][pos.x];
+      const properties = TILE_PROPERTIES[tile.type];
+      
+      // Small chance for resources from expanded blocks
+      let resources = 0;
+      if (tile.resources > 0 && Math.random() < 0.5) {
+        resources = Math.max(1, Math.floor(tile.resources * 0.5)); // 50% of normal resources
+        this.resourceChunkManager.createChunksFromTile(tile.type, pos.x, pos.y, resources);
+      }
+      
+      // Break effect for visual feedback
+      this.miningEffects.createBlockBreakEffect(pos.x, pos.y, tile.type);
+      
+      // Convert to air
+      tile.type = TileType.AIR;
+      tile.integrity = 0;
+      tile.resources = 0;
+      tile.discovered = true;
+      
+      // Render updates
+      this.renderTile(pos.x, pos.y);
+      this.tileRenderer.updateAdjacentTiles(pos.x, pos.y, this.world, TILE_SIZE);
+    });
+    
+    if (blocksToExpand.length > 0) {
+      console.log(`   🏗️ TUNNEL EXPANSION: Cleared ${blocksToExpand.length} block above for 2-high tunnel (monster height)`);
     }
   }
 
@@ -1596,6 +1844,18 @@ export class GameScene extends Phaser.Scene {
   
   private findOptimalDiggingTile(monster: Monster, tileX: number, tileY: number): { x: number; y: number; priority: number } | null {
     let bestTile: { x: number; y: number; priority: number } | null = null;
+    
+    // SMART PATHFINDING: Check if there's a nearby pheromone we can WALK to without mining
+    const nearbyPheromone = this.findNearestPheromone(tileX, tileY, 8);
+    if (nearbyPheromone) {
+      // Check if there's a clear path (or mostly clear) - walk close first!
+      const canWalkCloser = this.canWalkToward(tileX, tileY, nearbyPheromone.x, nearbyPheromone.y);
+      if (canWalkCloser) {
+        // Don't mine yet - walk closer first!
+        return null;
+      }
+      // If we can't walk, proceed to mine blocking tiles
+    }
     
     // Check if monster should return to a successful mining area first
     if (monster.shouldReturnToMining && monster.getBestMiningMemory()) {
@@ -1661,11 +1921,17 @@ export class GameScene extends Phaser.Scene {
             priority *= 0.1; // Monsters avoid mining while wall-crawling
           }
           
-          // Check pheromone influence on mining priority
+          // Check pheromone influence on mining priority - ULTRA MASSIVE BOOST!
           if (this.pheromoneSystem.isMiningForbidden(x, y)) {
             priority = 0; // Completely forbidden by pheromones
           } else if (this.pheromoneSystem.isMiningEncouraged(x, y)) {
-            priority *= 5.0; // HUGE boost for "mine here" pheromones
+            priority *= 50.0; // ULTRA MASSIVE boost for "mine here" pheromones - EXTREMELY determined to reach!
+          }
+          
+          // AGGRESSIVE PATHFINDING: Check if this tile is blocking path to a pheromone
+          const blockingPathToPheromone = this.isBlockingPathToPheromone(x, y, tileX, tileY);
+          if (blockingPathToPheromone) {
+            priority *= 20.0; // Mine through blocks to reach deep pheromones!
           }
           
           // Apply genetic preferences
@@ -1688,6 +1954,76 @@ export class GameScene extends Phaser.Scene {
     }
     
     return bestTile;
+  }
+
+  /**
+   * Check if monster can walk toward a position without mining
+   */
+  private canWalkToward(fromX: number, fromY: number, toX: number, toY: number): boolean {
+    // Simple check: can we move 1-2 tiles closer without hitting solid blocks?
+    const dx = Math.sign(toX - fromX);
+    const dy = Math.sign(toY - fromY);
+    
+    // Check next tile in that direction
+    const nextX = fromX + dx;
+    const nextY = fromY;
+    
+    if (nextX >= 0 && nextX < WORLD_WIDTH && nextY >= 0 && nextY < WORLD_HEIGHT) {
+      const nextTile = this.world[nextY][nextX];
+      if (nextTile && nextTile.type === TileType.AIR) {
+        return true; // Can walk horizontally
+      }
+    }
+    
+    return false; // Blocked - need to mine
+  }
+
+  /**
+   * Find nearest MINE_HERE pheromone
+   */
+  private findNearestPheromone(tileX: number, tileY: number, radius: number): {x: number, y: number} | null {
+    let nearest: {x: number, y: number, distance: number} | null = null;
+    
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        const checkX = tileX + dx;
+        const checkY = tileY + dy;
+        
+        if (checkX >= 0 && checkX < WORLD_WIDTH && checkY >= 0 && checkY < WORLD_HEIGHT) {
+          const pheromone = this.pheromoneSystem?.getPheromoneAt(checkX, checkY);
+          if (pheromone && pheromone.type === PheromoneType.MINE_HERE && pheromone.strength > 10) {
+            const distance = Math.abs(dx) + Math.abs(dy);
+            if (!nearest || distance < nearest.distance) {
+              nearest = {x: checkX, y: checkY, distance};
+            }
+          }
+        }
+      }
+    }
+    
+    return nearest;
+  }
+
+  /**
+   * Check if this tile is blocking the path to a pheromone
+   * Makes monsters aggressively mine toward deep pheromones
+   */
+  private isBlockingPathToPheromone(tileX: number, tileY: number, monsterTileX: number, monsterTileY: number): boolean {
+    // Look for pheromones in a large area
+    const pheromone = this.findNearestPheromone(monsterTileX, monsterTileY, 25);
+    if (!pheromone) return false;
+    
+    // Check if this tile is roughly in the direction of the pheromone
+    const dx = pheromone.x - monsterTileX;
+    const dy = pheromone.y - monsterTileY;
+    const tileDx = tileX - monsterTileX;
+    const tileDy = tileY - monsterTileY;
+    
+    // Tile is blocking if it's in the same direction as the pheromone
+    const sameXDirection = (dx > 0 && tileDx > 0) || (dx < 0 && tileDx < 0) || dx === 0;
+    const sameYDirection = (dy > 0 && tileDy > 0) || (dy < 0 && tileDy < 0) || dy === 0;
+    
+    return sameXDirection && sameYDirection;
   }
 
   /**
@@ -1773,6 +2109,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // LEAD MINER CHECK: Don't pick up resources if currently lead mining
+    const isLeadMiner = (monster as any).isLeadMiner && 
+                        (monster as any).leadMinerUntil && 
+                        Date.now() < (monster as any).leadMinerUntil;
+    
+    if (isLeadMiner) {
+      // Lead miners focus on digging, not carrying
+      return;
+    }
+    
     // Look for available chunks to carry
     const nearbyChunk = this.resourceChunkManager.getClosestAvailableChunk(
       monster.position.x, monster.position.y
@@ -1801,7 +2147,7 @@ export class GameScene extends Phaser.Scene {
             // Heavy chunks are much harder to move alone
             if (nearbyChunk.carriersNeeded >= 3) {
               // Super heavy - monster can barely budge it alone
-              monster.energy -= 5; // Immediate energy cost for trying to lift heavy chunks
+              // Energy system removed - no energy cost
             }
           }
         } else if (nearbyChunk.currentCarriers.length < nearbyChunk.carriersNeeded) {
@@ -1857,23 +2203,77 @@ export class GameScene extends Phaser.Scene {
     const hivePos = this.colonyHive.getDepositPosition();
     const chunkId = monster.carryingChunkId;
 
+    // Track horizontal progress to detect stuck carriers
+    if (!(monster as any).carryStartTime) {
+      (monster as any).carryStartTime = Date.now();
+      (monster as any).carryStartX = monster.position.x;
+      (monster as any).lastCarryX = monster.position.x;
+      (monster as any).lastCarryCheckTime = Date.now();
+    }
+
+    // Check if stuck (not making horizontal progress toward hive)
+    const now = Date.now();
+    const timeSinceLastCheck = (now - (monster as any).lastCarryCheckTime) / 1000;
+    
+    if (timeSinceLastCheck >= 2) { // Check every 2 seconds
+      const horizontalProgress = Math.abs(monster.position.x - (monster as any).lastCarryX);
+      const distanceToHive = Math.abs(monster.position.x - hivePos.x);
+      
+      // If moved less than 10px horizontally in 2 seconds while far from hive = STUCK
+      if (horizontalProgress < 10 && distanceToHive > 50) {
+        console.log(`🎯 ${monster.id.substring(0, 20)}: STUCK while carrying! Throwing block toward hive!`);
+        console.log(`   Progress: ${horizontalProgress.toFixed(1)}px in ${timeSinceLastCheck.toFixed(1)}s`);
+        console.log(`   Distance to hive: ${distanceToHive.toFixed(0)}px`);
+        
+        // Throw the chunk toward the hive!
+        const chunks = this.resourceChunkManager.getAllChunks();
+        const chunk = chunks.find(c => c.id === chunkId);
+        
+        if (chunk) {
+          // Calculate throw direction toward hive
+          const dx = hivePos.x - monster.position.x;
+          const throwDistance = Math.min(100, distanceToHive * 0.3); // Throw 30% of distance, max 100px
+          const throwX = monster.position.x + Math.sign(dx) * throwDistance;
+          const throwY = monster.position.y - 20; // Slight upward throw
+          
+          // Move chunk to thrown position
+          this.resourceChunkManager.moveChunk(chunkId, throwX, throwY);
+          console.log(`   📦 Threw chunk from (${monster.position.x.toFixed(0)}, ${monster.position.y.toFixed(0)}) to (${throwX.toFixed(0)}, ${throwY.toFixed(0)})`);
+        }
+        
+        // Drop the chunk and clear carrier state
+        this.resourceChunkManager.removeCarrier(chunkId, monster.id);
+        monster.carryingChunkId = null;
+        (monster as any).carryStartTime = null;
+        (monster as any).carryStartX = null;
+        (monster as any).lastCarryX = null;
+        (monster as any).lastCarryCheckTime = null;
+        
+        // Reset to exploration/mining
+        monster.target = null;
+        monster.state = MonsterState.IDLE;
+        monster.currentAction = MonsterAction.EXPLORE;
+        
+        console.log(`   ✅ Monster freed to continue other work`);
+        return;
+      }
+      
+      // Update tracking for next check
+      (monster as any).lastCarryX = monster.position.x;
+      (monster as any).lastCarryCheckTime = now;
+    }
+
     // Move toward hive - but much slower with heavy chunks!
     monster.target = hivePos;
     
-    // Get chunk to check weight
+    // Calculate and store weight slowdown multiplier on monster
     const chunks = this.resourceChunkManager.getAllChunks();
     const chunk = chunks.find(c => c.id === chunkId);
-    
-    // Heavy chunks slow down the monster significantly
-    if (chunk && chunk.carriersNeeded >= 2) {
-      const weightPenalty = 0.3 / chunk.carriersNeeded; // Heavier = much slower
-      monster.position.vx *= weightPenalty;
-      monster.position.vy *= weightPenalty;
-      
-      // Drain more energy when carrying heavy loads alone
-      if (chunk.currentCarriers.length < chunk.carriersNeeded) {
-        monster.energy -= 2.0 * (chunk.carriersNeeded - chunk.currentCarriers.length) * 0.016;
-      }
+    if (chunk) {
+      // Weight-based slowdown: Dirt (8-12) = 0.88-0.92x, Stone (25-40) = 0.60-0.75x, Copper (50-70) = 0.30-0.50x
+      (monster as any).carryingWeightMultiplier = Math.max(0.3, 1.0 - (chunk.weight * 0.01));
+    } else {
+      (monster as any).carryingWeightMultiplier = 1.0; // No slowdown if no chunk found
     }
 
     // Update chunk position
@@ -1894,6 +2294,7 @@ export class GameScene extends Phaser.Scene {
         this.totalResources += chunk.resourceValue; // Keep for backwards compatibility
         this.colonyHive.createDepositEffect(chunk);
         monster.carryingChunkId = null;
+        (monster as any).carryingWeightMultiplier = 1.0; // Clear weight slowdown
         monster.target = null;
 
         // REWARD! Monster delivered resources - now wants to return to that mining area
@@ -1998,7 +2399,106 @@ export class GameScene extends Phaser.Scene {
     this.resourceChunkManager.update();
   }
 
+  /**
+   * Handle monsters pushing each other - moving monsters push stuck ones
+   */
+  private handleMonsterPushing(monster: Monster, deltaTime: number): void {
+    // Track horizontal movement for stuck detection
+    if (!(monster as any).movementTracker) {
+      (monster as any).movementTracker = {
+        lastX: monster.position.x,
+        lastCheckTime: Date.now(),
+        totalHorizontalMovement: 0,
+        isStuck: false
+      };
+    }
+    
+    const tracker = (monster as any).movementTracker;
+    const now = Date.now();
+    const timeSinceCheck = (now - tracker.lastCheckTime) / 1000;
+    
+    // Update movement tracking every second
+    if (timeSinceCheck >= 1) {
+      const horizontalMovement = Math.abs(monster.position.x - tracker.lastX);
+      tracker.totalHorizontalMovement += horizontalMovement;
+      tracker.lastX = monster.position.x;
+      tracker.lastCheckTime = now;
+      
+      // Check if stuck (less than 20px total horizontal movement in 4 seconds)
+      if (timeSinceCheck >= 4 && tracker.totalHorizontalMovement < 20) {
+        tracker.isStuck = true;
+      } else if (tracker.totalHorizontalMovement > 20) {
+        tracker.isStuck = false;
+        tracker.totalHorizontalMovement = 0; // Reset counter when moving
+      }
+    }
+    
+    // If this monster is stuck, it can be pushed by others
+    if (tracker.isStuck) {
+      (monster as any).canBePushed = true;
+    }
+    
+    // If this monster is moving, check for pushing stuck monsters
+    const isMoving = Math.abs(monster.position.vx) > 15 || Math.abs(monster.position.vy) > 15;
+    
+    if (isMoving) {
+      // Check for collisions with stuck monsters
+      for (const other of this.monsters) {
+        if (other.id === monster.id) continue;
+        if (!(other as any).canBePushed) continue; // Only push stuck monsters
+        
+        // Calculate distance between monsters
+        const dx = other.position.x - monster.position.x;
+        const dy = other.position.y - monster.position.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Collision threshold - about 1 tile
+        if (distance < TILE_SIZE * 1.5) {
+          // PUSH THE STUCK MONSTER!
+          const pushStrength = 150; // Strong push
+          const pushAngle = Math.atan2(dy, dx);
+          
+          // Apply push force in direction away from moving monster
+          other.position.vx = Math.cos(pushAngle) * pushStrength;
+          other.position.vy = Math.sin(pushAngle) * pushStrength * 0.5; // Less vertical push
+          
+          // Make them fall over for dramatic effect
+          (other as any).facePlanted = true;
+          (other as any).recoverTime = 0.5; // 0.5 second recovery
+          other.position.onGround = false; // Knock them off ground
+          
+          // Mark as no longer stuck after being pushed
+          (other as any).canBePushed = false;
+          if ((other as any).movementTracker) {
+            (other as any).movementTracker.isStuck = false;
+            (other as any).movementTracker.totalHorizontalMovement = 100; // Reset with high value
+          }
+          
+          console.log(`💥 ${monster.id.substring(0, 15)} PUSHED stuck monster ${other.id.substring(0, 15)}!`);
+          console.log(`   Push force: vx=${other.position.vx.toFixed(1)}, vy=${other.position.vy.toFixed(1)}`);
+          
+          // Slight recoil for pusher too
+          monster.position.vx *= 0.9;
+        }
+      }
+    }
+  }
+
   private applyPhysics(monster: Monster, deltaTime: number): void {
+    // 🐛 DEBUG: Track if monster has low velocity
+    const isMovingSlowly = Math.abs(monster.position.vx) < 5 && Math.abs(monster.position.vy) < 5;
+    if (isMovingSlowly && Math.random() < 0.05) { // 5% chance to log slow monsters
+      // DISABLED spam log
+      // console.log(`🐌 SLOW MONSTER: ${monster.id.substring(0, 20)}`);
+      console.log(`   Position: (${monster.position.x.toFixed(1)}, ${monster.position.y.toFixed(1)})`);
+      console.log(`   Velocity: vx=${monster.position.vx.toFixed(1)}, vy=${monster.position.vy.toFixed(1)}`);
+      console.log(`   OnGround: ${monster.position.onGround}`);
+      console.log(`   FacePlanted: ${(monster as any).facePlanted || false}`);
+      console.log(`   RecoverTime: ${(monster as any).recoverTime || 0}`);
+      console.log(`   Target: ${monster.target ? `(${monster.target.x.toFixed(0)}, ${monster.target.y.toFixed(0)})` : 'none'}`);
+      console.log(`   Carrying: ${monster.carryingChunkId || 'none'}`);
+    }
+    
     // PYRAMID CLIMBING RESOURCE THROW LOGIC
     const pyramidCenter = WORLD_WIDTH * TILE_SIZE / 2;
     
@@ -2020,12 +2520,12 @@ export class GameScene extends Phaser.Scene {
     const canHop = monster.sprite && (monster.sprite as any).movementType === 'hop';
     
     // STRONG GRAVITY - non-flyers FALL HARD
-    const gravity = canFly ? 0 : 2000; // Heavy gravity for realistic falling
-    const terminalVelocity = canFly ? 0 : 900; // Fast terminal velocity
+    const gravity = canFly ? 0 : 3000; // INCREASED: Much heavier gravity for faster falling
+    const terminalVelocity = canFly ? 0 : 1200; // INCREASED: Faster terminal velocity
     const airResistance = 0.95; // Less air resistance = faster fall
     const groundFriction = 0.75; // More friction - less sliding
     const wallCrawlSpeed = 0.05; // EXTREMELY slow wall-crawling (was 0.1)
-    const wallCrawlEnergyDrain = 8.0 * deltaTime; // MASSIVE energy cost for wall climbing
+    // Energy system removed - no energy drain for wall climbing
     
     // ====== MARIO-STYLE PLATFORM PHYSICS ======
     // Multi-point collision detection for smooth platforming
@@ -2055,7 +2555,7 @@ export class GameScene extends Phaser.Scene {
     const rightFootX = monster.position.x + halfWidth;
     
     // DEBUG: Enable detailed physics debugging
-    const ENABLE_PHYSICS_DEBUG = true; // Set to false to disable all debug logs
+    const ENABLE_PHYSICS_DEBUG = false; // DISABLED to reduce spam
     const DEBUG_SAMPLE_RATE = 0.02; // 2% sample rate
     const debugThis = ENABLE_PHYSICS_DEBUG && Math.random() < DEBUG_SAMPLE_RATE;
     
@@ -2099,46 +2599,59 @@ export class GameScene extends Phaser.Scene {
     
     for (const point of checkPoints) {
       const checkTileX = Math.floor(point.x / TILE_SIZE);
-      
-      // Check for ground: Look at the tile the feet are currently IN
-      // If feet are at Y=607 (tile 37), check tile 37 for solid blocks
       const feetTileY = Math.floor(feetY / TILE_SIZE);
-      const checkTileY = feetTileY; // Check the tile where feet are AT
       
-      if (debugThis) {
-        console.log(`   🔎 ${point.label}: checking tile [${checkTileX}, ${checkTileY}]`);
-      }
+      // Check BOTH current tile AND tile below for ground support
+      const tilesToCheck = [feetTileY, feetTileY + 1];
       
-      if (checkTileX >= 0 && checkTileX < WORLD_WIDTH && checkTileY >= 0 && checkTileY < WORLD_HEIGHT) {
-        const tileBelow = this.world[checkTileX][checkTileY];
-        
-        if (debugThis) {
-          console.log(`      Tile type: ${tileBelow?.type || 'NONE'}, solid: ${tileBelow ? TILE_PROPERTIES[tileBelow.type].solid : false}`);
+      for (const checkTileY of tilesToCheck) {
+        if (debugThis && checkTileY === feetTileY) {
+          console.log(`   🔎 ${point.label}: checking tile [${checkTileX}, ${checkTileY}]`);
         }
         
-        if (tileBelow && TILE_PROPERTIES[tileBelow.type].solid) {
-          const tileSurfaceY = checkTileY * TILE_SIZE; // Top of tile
-          const distanceAboveSurface = tileSurfaceY - feetY; // Positive = monster above tile
+        if (checkTileX >= 0 && checkTileX < WORLD_WIDTH && checkTileY >= 0 && checkTileY < WORLD_HEIGHT) {
+          const tileBelow = this.world[checkTileX][checkTileY];
           
-          if (debugThis) {
-            console.log(`      Surface Y: ${tileSurfaceY}, Distance: ${distanceAboveSurface.toFixed(1)}px`);
-            console.log(`      Within range? ${distanceAboveSurface >= -2 && distanceAboveSurface <= TILE_SIZE}`);
+          if (debugThis && checkTileY === feetTileY) {
+            console.log(`      Tile type: ${tileBelow?.type || 'NONE'}, solid: ${tileBelow ? TILE_PROPERTIES[tileBelow.type].solid : false}`);
           }
           
-          // MARIO-STYLE: Need to be within 1 tile (16px) above the ground surface
-          if (distanceAboveSurface >= -2 && distanceAboveSurface <= TILE_SIZE) {
-            hasGroundSupport = true;
-            groundSurfaceY = tileSurfaceY;
+          if (tileBelow && TILE_PROPERTIES[tileBelow.type].solid) {
+            const tileSurfaceY = checkTileY * TILE_SIZE; // Top of tile
+            const distanceAboveSurface = tileSurfaceY - feetY; // Positive = monster above tile
             
-            if (debugThis) {
-              console.log(`   ✅ GROUND FOUND via ${point.label}!`);
+            // CRITICAL: Check that we're actually ABOVE the tile, not beside it
+            // Monster's horizontal center must be within the tile bounds horizontally
+            const tileLeftEdge = checkTileX * TILE_SIZE;
+            const tileRightEdge = (checkTileX + 1) * TILE_SIZE;
+            const isHorizontallyAligned = point.x >= tileLeftEdge - 2 && point.x <= tileRightEdge + 2;
+            
+            if (debugThis && checkTileY === feetTileY) {
+              console.log(`      Surface Y: ${tileSurfaceY}, Distance: ${distanceAboveSurface.toFixed(1)}px`);
+              console.log(`      Horizontal check: point.x=${point.x.toFixed(1)}, tile=[${tileLeftEdge}, ${tileRightEdge}], aligned=${isHorizontallyAligned}`);
+              console.log(`      Within range? ${distanceAboveSurface >= -8 && distanceAboveSurface <= TILE_SIZE && isHorizontallyAligned}`);
             }
-            break; // Found ground, no need to check other points
+            
+            // MARIO-STYLE: Need to be within 1 tile (16px) above the ground surface AND horizontally aligned
+            // Increased tolerance to -8px to catch monsters hovering just above ground
+            if (distanceAboveSurface >= -8 && distanceAboveSurface <= TILE_SIZE && isHorizontallyAligned) {
+              hasGroundSupport = true;
+              // CRITICAL FIX: Place feet JUST ABOVE the block (not AT it) to avoid "inside block"
+              // Classic platformer technique: surface is 1px above the tile boundary
+              groundSurfaceY = tileSurfaceY - 1;
+              
+              if (debugThis) {
+                console.log(`   ✅ GROUND FOUND via ${point.label}!`);
+              }
+              break; // Found ground, exit tile checking loop
+            }
           }
+        } else if (debugThis && checkTileY === feetTileY) {
+          console.log(`      ⚠️ Out of bounds!`);
         }
-      } else if (debugThis) {
-        console.log(`      ⚠️ Out of bounds!`);
       }
+      
+      if (hasGroundSupport) break; // Found ground, exit point checking loop
     }
     
     if (debugThis) {
@@ -2179,6 +2692,15 @@ export class GameScene extends Phaser.Scene {
         // Use dimensions already calculated at top of function
         const distanceFromSurface = groundSurfaceY - feetY;
         const oldY = monster.position.y;
+        const oldVy = monster.position.vy;
+        
+        // DEBUG: Track why snap might or might not happen
+        if (debugThis) {
+          console.log(`   🔍 SNAP CHECK:`);
+          console.log(`      vy=${oldVy.toFixed(1)}, distanceFromSurface=${distanceFromSurface.toFixed(1)}`);
+          console.log(`      justJumped=${justJumped}, justJumpedThisFrame=${(monster as any).justJumpedThisFrame}`);
+          console.log(`      isJumpingUp=${oldVy < -50}, shouldSnap=${Math.abs(distanceFromSurface) <= TILE_SIZE && !justJumped}`);
+        }
         
         // ALWAYS snap when ground is detected to prevent sinking (BUT NOT if just jumped!)
         if (Math.abs(distanceFromSurface) <= TILE_SIZE && !justJumped) {
@@ -2188,13 +2710,15 @@ export class GameScene extends Phaser.Scene {
           monster.position.vy = 0; // Stop falling
           
           if (debugThis) {
-            console.log(`   📍 SNAP TO GROUND:`);
+            console.log(`   ⚠️ SNAPPED TO GROUND (was moving at vy=${oldVy.toFixed(1)}):`);
             console.log(`      groundSurfaceY: ${groundSurfaceY}`);
             console.log(`      monsterHeight: ${monsterHeight.toFixed(1)}, halfHeight: ${halfHeight.toFixed(1)}`);
             console.log(`      oldY (center): ${oldY.toFixed(1)} → ${monster.position.y.toFixed(1)}`);
             console.log(`      oldFeetY: ${(oldY + halfHeight).toFixed(1)} → newFeetY: ${(monster.position.y + halfHeight).toFixed(1)}`);
             console.log(`      Distance moved: ${(monster.position.y - oldY).toFixed(1)}px`);
           }
+        } else if (debugThis && Math.abs(distanceFromSurface) <= TILE_SIZE) {
+          console.log(`   ✋ SNAP PREVENTED: justJumped=${justJumped}, keeping vy=${oldVy.toFixed(1)}`);
         }
         
         // Reset jump states
@@ -2397,13 +2921,13 @@ export class GameScene extends Phaser.Scene {
           // Check if near pyramid for stronger hops
           const nearPyramid = Math.abs(monster.position.x - (WORLD_WIDTH * TILE_SIZE / 2)) < TILE_SIZE * 15;
           monster.position.vy = nearPyramid ? -450 : -400; // Smoother hop forces (was -475, -425)
-          monster.energy -= 1; // Small energy cost
+          // Energy system removed - no energy cost
         }
-      } else if (canFly && monster.energy > 5) {
+      } else if (canFly) {
         // Flying creatures NEVER stay on ground - immediate takeoff
         monster.position.vy = -250; // Strong lift-off force
         monster.position.onGround = false; // Never grounded
-        monster.energy -= 0.3 * deltaTime; // Minimal flying cost
+        // Energy system removed - no flying cost
       }
       
       // Apply ground friction always when on ground
@@ -2436,7 +2960,7 @@ export class GameScene extends Phaser.Scene {
       
       // MARIO-STYLE GRAVITY: Fast fall for responsive feel
       if (!canFly) {
-        const gravityMultiplier = monster.position.vy > 0 ? 1.2 : 1.0; // Fall faster than jump
+        const gravityMultiplier = monster.position.vy > 0 ? 1.5 : 1.0; // INCREASED: Fall much faster than jump (was 1.2)
         monster.position.vy += gravity * deltaTime * gravityMultiplier;
         monster.position.vy = Math.min(monster.position.vy, terminalVelocity);
       }
@@ -2454,21 +2978,13 @@ export class GameScene extends Phaser.Scene {
       monster.position.vx *= airResistance;
       
     } else if (canWallCrawl && !hasGroundSupport) {
-      // WALL CRAWLING MODE - extremely difficult and tiring!
+      // WALL CRAWLING MODE - extremely difficult!
       monster.isWallCrawling = true;
       monster.facingBackward = true; // Show monster's back (facing wall)
       monster.position.onGround = false;
       
-      // MASSIVE energy drain from wall crawling - monsters hate this!
-      monster.energy = Math.max(0, monster.energy - wallCrawlEnergyDrain);
-      
-      // If energy gets too low, monsters can't wall crawl anymore
-      if (monster.energy < 20) {
-        // Too tired to wall crawl - fall down!
-        monster.isWallCrawling = false;
-        monster.position.vy += gravity * deltaTime * 1.5; // Fall faster when exhausted
-        monster.position.vx *= 0.5; // Lose horizontal momentum
-      } else {
+      // Energy system removed - monsters can wall crawl indefinitely
+      {
         // EXTREMELY slow movement when wall crawling
         monster.position.vx *= wallCrawlSpeed;
         monster.position.vy *= wallCrawlSpeed;
@@ -2484,7 +3000,7 @@ export class GameScene extends Phaser.Scene {
       monster.facingBackward = false;
       monster.position.onGround = false;
       
-      if (canFly && monster.energy > 5) {
+      if (canFly) {
         // FLYING - ZERO GRAVITY FREEDOM!
         (monster as any).isFalling = false; // Flying creatures NEVER fall
         (monster as any).fallHeight = 0; // No fall damage ever
@@ -2500,41 +3016,141 @@ export class GameScene extends Phaser.Scene {
         const isCarrying = monster.carryingChunkId !== null || monster.carryingResources > 0;
         
         if (isCarrying) {
-          // STRUGGLING TO FLY WITH LOAD (but still no gravity!)
-          // Just harder to fly up when carrying
-          monster.position.vy *= 0.95; // Slight damping when loaded
+          // STRUGGLING TO FLY WITH LOAD - but must reach hive!
           
-          // Struggle to maintain altitude
-          if (monster.position.vy > 30 || Math.random() < 0.1) {
-            monster.position.vy = -80; // Weak flap
-            monster.energy -= 4; // Double energy cost when carrying
+          // If carrying resources, FLY DIRECTLY TO HIVE (both X and Y!)
+          if (monster.target) {
+            const dx = monster.target.x - monster.position.x;
+            const dy = monster.target.y - monster.position.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 20) { // Not at hive yet
+              // Fly directly toward target with reduced speed (carrying is hard)
+              const carrySpeed = 60; // Slower when carrying (normal is 80)
+              monster.position.vx = (dx / distance) * carrySpeed;
+              monster.position.vy = (dy / distance) * carrySpeed;
+              
+              // Light damping for smooth movement
+              monster.position.vx *= 0.95;
+              monster.position.vy *= 0.95;
+            } else {
+              // Close to hive - slow down
+              monster.position.vx *= 0.8;
+              monster.position.vy *= 0.8;
+            }
+          } else {
+            // No target - just struggle to stay airborne
+            monster.position.vy *= 0.95; // Slight damping when loaded
+            
+            // Struggle to maintain altitude
+            if (monster.position.vy > 30 || Math.random() < 0.1) {
+              monster.position.vy = -80; // Weak flap
+            }
+            
+            // Poor air control when loaded
+            monster.position.vx *= 0.9;
+            monster.position.vy = Math.min(monster.position.vy, terminalVelocity * 0.7);
           }
-          
-          // Poor air control when loaded
-          monster.position.vx *= 0.9;
-          monster.position.vy = Math.min(monster.position.vy, terminalVelocity * 0.7);
         } else {
           // TRUE FLYING - NO GRAVITY AT ALL!
           // Flying creatures move freely in any direction
           
-          // Random flight pattern - up, down, sideways as they please
-          if (Math.random() < 0.15) { // 15% chance to change direction
-            // Fly in any direction
-            monster.position.vy = (Math.random() - 0.5) * 400; // -200 to +200 vertical
-            monster.position.vx = (Math.random() - 0.5) * 300; // -150 to +150 horizontal
+          // BOUNDARY CONSTRAINTS - Keep flyers within chamber walls
+          const worldPixelWidth = WORLD_WIDTH * TILE_SIZE;
+          const worldPixelHeight = WORLD_HEIGHT * TILE_SIZE;
+          const boundaryMargin = TILE_SIZE * 5; // INCREASED: 5 tiles from edge (was 3)
+          
+          // Check boundaries and push back toward center - STRONGER
+          let needsRedirect = false;
+          
+          // Near LEFT wall
+          if (monster.position.x < boundaryMargin) {
+            monster.position.vx = Math.abs(monster.position.vx) + 100; // STRONGER: Push right (was +50)
+            monster.position.x = boundaryMargin; // Hard clamp
+            needsRedirect = true;
+          }
+          // Near RIGHT wall
+          else if (monster.position.x > worldPixelWidth - boundaryMargin) {
+            monster.position.vx = -Math.abs(monster.position.vx) - 100; // STRONGER: Push left (was -50)
+            monster.position.x = worldPixelWidth - boundaryMargin; // Hard clamp
+            needsRedirect = true;
           }
           
-          // Tend to fly upward more often
-          if (Math.random() < 0.2 && monster.position.vy > -100) {
-            monster.position.vy = -200 - Math.random() * 200; // Fly UP freely
+          // Near TOP (ceiling)
+          if (monster.position.y < boundaryMargin) {
+            monster.position.vy = Math.abs(monster.position.vy) + 100; // STRONGER: Push down (was +50)
+            monster.position.y = boundaryMargin; // Hard clamp
+            needsRedirect = true;
+          }
+          // Near BOTTOM (floor)
+          else if (monster.position.y > worldPixelHeight - boundaryMargin) {
+            monster.position.vy = -Math.abs(monster.position.vy) - 100; // STRONGER: Push up (was -50)
+            monster.position.y = worldPixelHeight - boundaryMargin; // Hard clamp
+            needsRedirect = true;
+          }
+          
+          // CHECK FOR PHEROMONES - Flying monsters respond to mine commands!
+          if (this.pheromoneSystem && !needsRedirect) {
+            // Look for mining pheromones
+            const senseRadius = 5; // 5 tile radius
+            const monsterTileX = Math.floor(monster.position.x / TILE_SIZE);
+            const monsterTileY = Math.floor(monster.position.y / TILE_SIZE);
+            
+            let strongestPheromone: { x: number, y: number, strength: number } | null = null;
+            
+            for (let dx = -senseRadius; dx <= senseRadius; dx++) {
+              for (let dy = -senseRadius; dy <= senseRadius; dy++) {
+                const checkX = monsterTileX + dx;
+                const checkY = monsterTileY + dy;
+                const pheromone = this.pheromoneSystem.getPheromoneAt(checkX, checkY);
+                
+                if (pheromone && pheromone.type === PheromoneType.MINE_HERE && pheromone.strength > 10) {
+                  if (!strongestPheromone || pheromone.strength > strongestPheromone.strength) {
+                    strongestPheromone = { x: checkX * TILE_SIZE, y: checkY * TILE_SIZE, strength: pheromone.strength };
+                  }
+                }
+              }
+            }
+            
+            // Fly toward strongest pheromone
+            if (strongestPheromone) {
+              const dx = strongestPheromone.x - monster.position.x;
+              const dy = strongestPheromone.y - monster.position.y;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+              
+              if (distance > 20) {
+                const speed = 80; // Moderate flying speed toward target
+                monster.position.vx = (dx / distance) * speed;
+                monster.position.vy = (dy / distance) * speed;
+              }
+            } else {
+              // Normal flying behavior (only when not redirecting and no pheromones)
+              // Random flight pattern - but stay in bounds
+              if (Math.random() < 0.08) { // REDUCED: 8% chance to change direction (was 15%)
+                // Fly in any direction, but moderate speeds
+                monster.position.vy = (Math.random() - 0.5) * 200; // REDUCED: -100 to +100 vertical (was 300)
+                monster.position.vx = (Math.random() - 0.5) * 200; // REDUCED: -100 to +100 horizontal (was 250)
+              }
+              
+              // Very gentle upward tendency
+              if (Math.random() < 0.05 && monster.position.vy > -30) {
+                monster.position.vy = -60 - Math.random() * 60; // Gentle upward drift
+              }
+            }
           }
           
           // PERFECT control - no air resistance
           monster.position.vx *= 1.0; // No slowdown
           monster.position.vy *= 0.98; // Tiny bit of vertical damping for control
           
-          // NO LIMITS on altitude - fly to the sky!
-          // monster.position.vy can be anything - no terminal velocity
+          // Cap maximum velocity to prevent flying off too fast
+          const maxFlySpeed = 200;
+          if (Math.abs(monster.position.vx) > maxFlySpeed) {
+            monster.position.vx = Math.sign(monster.position.vx) * maxFlySpeed;
+          }
+          if (Math.abs(monster.position.vy) > maxFlySpeed) {
+            monster.position.vy = Math.sign(monster.position.vy) * maxFlySpeed;
+          }
         }
       } else {
         // NON-FLYING FALLING - DROP LIKE A ROCK!
@@ -2627,78 +3243,139 @@ export class GameScene extends Phaser.Scene {
       }
     }
     
-    // ====== APPLY VELOCITY TO POSITION WITH COLLISION ======
-    // CRITICAL: Use FEET position for collision, not center!
+    // ====== CLIFF TUMBLING & MONSTER BUMPING ======
+    // Make monsters on cliff edges faceplant down to prevent traffic jams (RARE)
+    // Make fast monsters knock over slow/stationary ones
     
-    if (debugThis) {
-      console.log(`   📏 COLLISION CHECK:`);
-      console.log(`      Center: (${monster.position.x.toFixed(1)}, ${monster.position.y.toFixed(1)})`);
-      console.log(`      Feet Y: ${currentFeetY.toFixed(1)} (tile ${currentFeetTileY})`);
-      console.log(`      Sprite size: ${monsterWidth.toFixed(1)}x${monsterHeight.toFixed(1)} (real bounds)`);
+    // CLIFF DETECTION: Only for STUCK monsters (barely moving or stationary)
+    const lastTumbleTime = (monster as any).lastTumbleTime || 0;
+    const tumbleCooldown = 5000; // 5 second cooldown between tumbles
+    const canTumble = (this.time.now - lastTumbleTime) > tumbleCooldown;
+    
+    if (monster.position.onGround && !canFly && canTumble && !(monster as any).facePlanted) {
+      const movementSpeed = Math.abs(monster.position.vx);
+      const direction = Math.sign(monster.position.vx) || 1;
+      const tileAhead = currentTileX + direction;
+      const tileBelowAhead = currentFeetTileY + 1;
+      
+      // Check if there's a cliff ahead (no ground below next tile)
+      let isCliff = false;
+      if (tileAhead >= 0 && tileAhead < WORLD_WIDTH && tileBelowAhead >= 0 && tileBelowAhead < WORLD_HEIGHT) {
+        const groundAhead = this.world[tileAhead][tileBelowAhead];
+        if (!groundAhead || !TILE_PROPERTIES[groundAhead.type].solid) {
+          isCliff = true;
+        }
+      }
+      
+      // Only tumble if SUPER SLOW (truly stuck/stationary) on cliff edge
+      // Normal walking should NOT trigger this - only stuck monsters
+      if (isCliff && movementSpeed > 0.5 && movementSpeed < 5 && Math.random() < 0.01) {
+        // FACEPLANT off cliff to clear traffic (VERY RARE - 1% chance per frame)
+        (monster as any).facePlanted = true;
+        (monster as any).recoverTime = 0.75;
+        (monster as any).lastTumbleTime = this.time.now;
+        monster.position.onGround = false;
+        monster.position.vx = direction * 80; // Push forward
+        monster.position.vy = 50; // Push down
+        console.log(`🤸 Monster tumbling off cliff! (stuck, clearing traffic)`);
+      }
     }
     
-    // Calculate new position
-    const newX = monster.position.x + monster.position.vx * deltaTime;
-    const newY = monster.position.y + monster.position.vy * deltaTime;
-    const newFeetY = newY + halfHeight;
+    // MONSTER BUMPING: Fast monsters knock over slow/stopped ones (RARE)
+    const lastBumpTime = (monster as any).lastBumpTime || 0;
+    const bumpCooldown = 2000; // 2 second cooldown between bumps
+    const canBump = (this.time.now - lastBumpTime) > bumpCooldown;
     
-    // Check if new position would be inside a solid block
-    const newTileX = Math.floor(newX / TILE_SIZE);
-    const newFeetTileY = Math.floor(newFeetY / TILE_SIZE);
-    const collisionTileX = Math.floor(monster.position.x / TILE_SIZE);
-    
-    let canMoveX = true;
-    let canMoveY = true;
-    
-    // Check horizontal movement at FEET level
-    if (newTileX >= 0 && newTileX < WORLD_WIDTH && currentFeetTileY >= 0 && currentFeetTileY < WORLD_HEIGHT) {
-      const tileAtNewX = this.world[newTileX][currentFeetTileY];
-      if (tileAtNewX && TILE_PROPERTIES[tileAtNewX.type].solid) {
-        canMoveX = false;
-        monster.position.vx = 0; // Stop horizontal velocity
+    if (canBump && Math.abs(monster.position.vx) > 80) { // Only very fast monsters
+      for (const other of this.monsters) {
+        if (other.id === monster.id) continue;
+        if ((other as any).facePlanted) continue; // Already down
         
-        // FALLBACK JUMP: If anticipation failed, jump when blocked
-        if (canJump && (monster.position.onGround || closeToGround)) {
-          const jumpPower = -680; // HUGE smooth Mario jump - 3 blocks high
-          monster.position.vy = jumpPower;
-          monster.position.onGround = false;
-          monster.hasJumped = true;
-          (monster as any).lastJumpTime = currentTime;
-          (monster as any).justJumpedThisFrame = true;
-          if (debugThis) {
-            console.log(`      🦘 FALLBACK JUMP! Blocked at wall, jumping up!`);
+        const dx = other.position.x - monster.position.x;
+        const dy = other.position.y - monster.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // If close and other is stopped/very slow
+        if (dist < TILE_SIZE * 1.2 && monster.position.onGround && other.position.onGround) {
+          const otherSpeed = Math.abs(other.position.vx);
+          
+          // Fast monster hits stopped one (RARE - 5% chance)
+          if (otherSpeed < 5 && Math.random() < 0.05) {
+            // KNOCK OVER the slow monster!
+            (other as any).facePlanted = true;
+            (other as any).recoverTime = 0.75;
+            (monster as any).lastBumpTime = this.time.now;
+            other.position.onGround = false;
+            other.position.vx = Math.sign(dx) * 100; // Push them over
+            other.position.vy = -50; // Slight bounce
+            console.log(`💥 Fast monster knocked over stopped one!`);
+            break; // Only knock one per frame
           }
         }
+      }
+    }
+    
+    // ====== SMOOTH PREEMPTIVE BLOCK COLLISION ======
+    // PREVENT monsters from EVER getting inside blocks with smooth correction
+    
+    // Calculate new position
+    let newX = monster.position.x + monster.position.vx * deltaTime;
+    let newY = monster.position.y + monster.position.vy * deltaTime;
+    
+    // PREEMPTIVE COLLISION: Check if approaching a block and smoothly slide to edge
+    const monsterRadius = monsterWidth * 0.4; // Collision radius
+    const checkTileX = Math.floor(newX / TILE_SIZE);
+    const checkTileY = Math.floor(newY / TILE_SIZE);
+    
+    // Check all surrounding tiles for smooth collision
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tileX = checkTileX + dx;
+        const tileY = checkTileY + dy;
         
-        if (debugThis) {
-          console.log(`      ❌ BLOCKED X: tile [${newTileX}, ${currentFeetTileY}] is ${tileAtNewX.type}`);
+        if (tileX >= 0 && tileX < WORLD_WIDTH && tileY >= 0 && tileY < WORLD_HEIGHT) {
+          const tile = this.world[tileX][tileY];
+          if (tile && TILE_PROPERTIES[tile.type].solid) {
+            // Calculate block boundaries
+            const blockLeft = tileX * TILE_SIZE;
+            const blockRight = (tileX + 1) * TILE_SIZE;
+            const blockTop = tileY * TILE_SIZE;
+            const blockBottom = (tileY + 1) * TILE_SIZE;
+            
+            // Check if monster overlaps this block
+            const overlapX = Math.max(0, Math.min(newX + monsterRadius, blockRight) - Math.max(newX - monsterRadius, blockLeft));
+            const overlapY = Math.max(0, Math.min(newY + halfHeight, blockBottom) - Math.max(newY - halfHeight, blockTop));
+            
+            if (overlapX > 0 && overlapY > 0) {
+              // SMOOTH SLIDE: Push monster to edge of block
+              if (overlapX < overlapY) {
+                // Horizontal collision - push left or right
+                if (newX < (blockLeft + blockRight) / 2) {
+                  newX = blockLeft - monsterRadius - 1; // Push left
+                  monster.position.vx = Math.min(0, monster.position.vx); // Kill rightward velocity
+                } else {
+                  newX = blockRight + monsterRadius + 1; // Push right
+                  monster.position.vx = Math.max(0, monster.position.vx); // Kill leftward velocity
+                }
+              } else {
+                // Vertical collision - push up or down
+                if (newY < (blockTop + blockBottom) / 2) {
+                  newY = blockTop - halfHeight - 1; // Push up
+                  monster.position.vy = Math.min(0, monster.position.vy); // Kill downward velocity
+                } else {
+                  newY = blockBottom + halfHeight + 1; // Push down
+                  monster.position.vy = Math.max(0, monster.position.vy); // Kill upward velocity
+                }
+              }
+            }
+          }
         }
       }
     }
     
-    // Check vertical movement at current X
-    if (collisionTileX >= 0 && collisionTileX < WORLD_WIDTH && newFeetTileY >= 0 && newFeetTileY < WORLD_HEIGHT) {
-      const tileAtNewY = this.world[collisionTileX][newFeetTileY];
-      if (tileAtNewY && TILE_PROPERTIES[tileAtNewY.type].solid) {
-        canMoveY = false;
-        monster.position.vy = 0; // Stop vertical velocity
-        if (debugThis) {
-          console.log(`      ❌ BLOCKED Y: tile [${collisionTileX}, ${newFeetTileY}] is ${tileAtNewY.type}`);
-        }
-      }
-    }
-    
-    // Apply movement only if not blocked
-    if (canMoveX) {
-      monster.position.x = newX;
-    }
-    if (canMoveY) {
-      monster.position.y = newY;
-    }
-    
-    if (debugThis && (!canMoveX || !canMoveY)) {
-      console.log(`      ✅ Movement applied: X=${canMoveX}, Y=${canMoveY}`);
-    }
+    // Apply smooth corrected movement
+    monster.position.x = newX;
+    monster.position.y = newY;
     
     // ====== ANOMALY DETECTION & AFTER-STATE LOGGING ======
     debugState.frameCount++;
@@ -2719,23 +3396,29 @@ export class GameScene extends Phaser.Scene {
     }
     
     // Check if walking on air (onGround but no solid below)
-    // CRITICAL: Check below FEET position, not center!
+    // With 1px fix, feet can be in air tile just above solid block - this is CORRECT!
+    // Check BOTH feetTile AND tile below for solid ground
     let walkingOnAir = false;
     if (monster.position.onGround) {
       const afterFeetY = monster.position.y + (monsterHeight / 2);
       const feetTileY = Math.floor(afterFeetY / TILE_SIZE);
-      const belowTileY = feetTileY + 1;
-      if (belowTileY < WORLD_HEIGHT) {
-        const tileBelow = this.world[afterMonsterTileX][belowTileY];
-        if (!tileBelow || !TILE_PROPERTIES[tileBelow.type].solid) {
-          walkingOnAir = true;
+      
+      // Check feet tile and tile below (classic platformer: feet in air, ground below)
+      let hasGroundSupport = false;
+      for (const checkY of [feetTileY, feetTileY + 1]) {
+        if (checkY < WORLD_HEIGHT) {
+          const tile = this.world[afterMonsterTileX][checkY];
+          if (tile && TILE_PROPERTIES[tile.type].solid) {
+            hasGroundSupport = true;
+            break;
+          }
         }
       }
+      walkingOnAir = !hasGroundSupport;
     }
     
-    // ANOMALY DETECTION: Log significant issues
-    const hasAnomaly = insideBlock || walkingOnAir || 
-                       (Math.abs(monster.position.y - beforePos.y) > 10 && debugState.frameCount > 10);
+    // ANOMALY DETECTION: Log significant issues - DISABLED for cleaner logs
+    const hasAnomaly = false; // Was: insideBlock || walkingOnAir || (Math.abs(monster.position.y - beforePos.y) > 10 && debugState.frameCount > 10);
     
     if (hasAnomaly || debugThis) {
       const posChange = {
@@ -3125,18 +3808,21 @@ export class GameScene extends Phaser.Scene {
       return false; // Don't interrupt existing upward jump
     }
     
-    // Prevent jump spam: minimum 200ms between jumps
-    if (timeSinceJump < 200) {
+    // Prevent jump spam: minimum 300ms between jumps (increased to prevent wall climbing)
+    if (timeSinceJump < 300) {
       return false; // Too soon after last jump
+    }
+    
+    // ANTI-WALL-CLIMB: If jumping repeatedly while against a wall, increase cooldown
+    const consecutiveJumps = (monster as any).consecutiveJumps || 0;
+    if (consecutiveJumps >= 2 && timeSinceJump < 1000) {
+      return false; // 1 second cooldown after 2+ consecutive jumps
     }
     
     // Clear jump flag when attempting new jump
     (monster as any).justJumped = false;
     
-    // Check energy
-    if (!isCarrying && monster.energy < 10) {
-      return false;
-    }
+    // Energy system removed - monsters always have energy to jump
 
     // If no valid target (stuck), use direction of movement velocity
     const hasValidTarget = Math.abs(targetX - monster.position.x) > TILE_SIZE * 0.5;
@@ -3186,6 +3872,14 @@ export class GameScene extends Phaser.Scene {
               const currentTime = this.time.now;
               monster.lastJumpTime = currentTime;
               
+              // Track consecutive jumps to detect wall climbing spam
+              const timeSinceLastJump = currentTime - lastJumpTime;
+              if (timeSinceLastJump < 500) {
+                (monster as any).consecutiveJumps = ((monster as any).consecutiveJumps || 0) + 1;
+              } else {
+                (monster as any).consecutiveJumps = 0; // Reset if enough time passed
+              }
+              
               // MARIO-STYLE SMART JUMP - Always clears obstacles!
               const currentFeetTileY = Math.floor((monster.position.y + 1) / TILE_SIZE);
               const jumpHeight = Math.max(currentFeetTileY - targetTileY, 2); // Always jump at least 2 blocks!
@@ -3202,15 +3896,15 @@ export class GameScene extends Phaser.Scene {
               if (isPyramidStep) {
                 // MEGA power for pyramid steps
                 monster.position.vx = direction * 180;
-                monster.energy -= 0.5;
+                // Energy system removed - no energy cost
               } else if (isCarrying) {
                 // Full power when carrying
                 monster.position.vx = direction * 150;
-                monster.energy -= 0;
+                // Energy system removed - no energy cost
               } else {
                 // Normal jump
                 monster.position.vx = direction * 130;
-                monster.energy -= 1;
+                // Energy system removed - no energy cost
               }
               
               // Enable double-jump and mark jump time
@@ -3224,8 +3918,19 @@ export class GameScene extends Phaser.Scene {
               
               // MASSIVE INSTANT BOOST - Immediately lift them up!
               // This creates the initial jump arc
+              const oldY = monster.position.y;
               monster.position.y -= 24; // HUGE instant 24px boost!
               monster.position.x += direction * 12; // Forward momentum
+              
+              // Debug jump initiation for ANY jumping monster
+              const monsterDebugKey = `debug_${monster.id}`;
+              const monsterDebug = (monster as any)[monsterDebugKey];
+              if (monsterDebug?.slowMonster === monster.id) {
+                console.log(`\n🚀 JUMP INITIATED!`);
+                console.log(`   Position: ${oldY.toFixed(1)} → ${monster.position.y.toFixed(1)} (moved ${-24}px)`);
+                console.log(`   Velocity: vy=${monster.position.vy.toFixed(1)}, vx=${monster.position.vx.toFixed(1)}`);
+                console.log(`   Flags: justJumped=true, onGround=false`);
+              }
               
               return true;
             }
@@ -3284,14 +3989,75 @@ export class GameScene extends Phaser.Scene {
     
     // If tile is destroyed, turn it into air and create resources
     if (tile.integrity <= 0) {
+      // Check if this monster is the LEAD MINER (furthest from hive while mining)
+      const hivePos = this.colonyHive.getDepositPosition();
+      const distanceToHive = Math.sqrt(
+        Math.pow(monster.position.x - hivePos.x, 2) + 
+        Math.pow(monster.position.y - hivePos.y, 2)
+      );
+      
+      // LEAD MINER MUST BE NON-FLYING! Flying monsters can't be lead miners
+      const canFly = this.ragdollPhysics.hasWings(monster.id);
+      let isLeadMiner = !canFly; // Flying monsters are automatically disqualified
+      
+      // Check if any other NON-FLYING mining monster is further away
+      if (isLeadMiner) {
+        for (const other of this.monsters) {
+          if (other.id === monster.id) continue;
+          if (other.state !== MonsterState.MINING) continue;
+          
+          // Skip flying monsters in comparison (they can't be lead miners)
+          const otherCanFly = this.ragdollPhysics.hasWings(other.id);
+          if (otherCanFly) continue;
+          
+          const otherDistance = Math.sqrt(
+            Math.pow(other.position.x - hivePos.x, 2) + 
+            Math.pow(other.position.y - hivePos.y, 2)
+          );
+          
+          if (otherDistance > distanceToHive + 50) { // 50px margin
+            isLeadMiner = false;
+            break;
+          }
+        }
+      }
+      
+      // LEAD MINER: Mark status BEFORE resources (so it works even with 0 resources)
+      if (isLeadMiner) {
+        (monster as any).isLeadMiner = true;
+        (monster as any).leadMinerUntil = Date.now() + 5000; // Stay lead miner for 5 seconds
+        console.log(`⛏️ LEAD MINER ACTIVATED: ${monster.id.substring(0, 15)} at distance ${distanceToHive.toFixed(0)}px from hive`);
+      }
+      
       // Drop resources if tile had any
       if (tile.resources > 0) {
-        this.resourceChunkManager.createChunksFromTile(
+        const chunks = this.resourceChunkManager.createChunksFromTile(
           tile.type,
           tileX,
           tileY,
           tile.resources
         );
+        
+        // LEAD MINER BEHAVIOR: Immediately throw resources toward hive
+        if (isLeadMiner && chunks && chunks.length > 0) {
+          console.log(`⛏️ LEAD MINER ${monster.id.substring(0, 15)}: Throwing resources back to hive!`);
+          
+          // Calculate throw direction toward hive
+          const dx = hivePos.x - monster.position.x;
+          const dy = hivePos.y - monster.position.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const throwPower = Math.min(150, distance * 0.3); // 30% of distance, max 150px
+          
+          // Throw each chunk toward hive
+          for (const chunk of chunks) {
+            const throwX = chunk.x + (dx / distance) * throwPower;
+            const throwY = chunk.y + (dy / distance) * throwPower * 0.7 - 30; // Arc upward
+            
+            this.resourceChunkManager.moveChunk(chunk.id, throwX, throwY);
+          }
+          
+          console.log(`   📦 Threw ${chunks.length} chunk(s) ${throwPower.toFixed(0)}px toward hive`);
+        }
       }
       
       // Turn tile into air
@@ -3302,16 +4068,71 @@ export class GameScene extends Phaser.Scene {
       
       console.log(`Monster ${monster.id} mined through ${properties.spriteName} at (${tileX}, ${tileY})`);
       
-      // Update monster's mining depth to track progress
-      if (monster.miningTarget) {
-        monster.miningDepth++;
-        // Continue mining in the same direction by updating target
-        if (monster.miningTarget.direction === 'left') {
-          monster.miningTarget.x = (tileX - 1) * TILE_SIZE + TILE_SIZE / 2;
-        } else if (monster.miningTarget.direction === 'right') {
-          monster.miningTarget.x = (tileX + 1) * TILE_SIZE + TILE_SIZE / 2;
-        } else if (monster.miningTarget.direction === 'down') {
-          monster.miningTarget.y = (tileY + 1) * TILE_SIZE + TILE_SIZE / 2;
+      // LEAD MINER: Keep mining toward pheromones!
+      if (isLeadMiner) {
+        // Look for more pheromones in the current direction
+        let nextTarget = null;
+        const searchRadius = 3; // Look 3 tiles in mining direction
+        
+        // Determine search direction based on current mining direction
+        if (monster.miningTarget) {
+          const dir = monster.miningTarget.direction;
+          
+          for (let dist = 1; dist <= searchRadius; dist++) {
+            let checkX = tileX;
+            let checkY = tileY;
+            
+            if (dir === 'left') checkX -= dist;
+            else if (dir === 'right') checkX += dist;
+            else if (dir === 'down') checkY += dist;
+            else if (dir === 'up') checkY -= dist;
+            
+            // Check if there's a pheromone at this location
+            if (checkX >= 0 && checkX < WORLD_WIDTH && checkY >= 0 && checkY < WORLD_HEIGHT) {
+              const pheromone = this.pheromoneSystem?.getPheromoneAt(checkX, checkY);
+              if (pheromone && pheromone.type === PheromoneType.MINE_HERE && pheromone.strength > 10) {
+                nextTarget = {
+                  x: checkX * TILE_SIZE + TILE_SIZE / 2,
+                  y: checkY * TILE_SIZE + TILE_SIZE / 2,
+                  direction: dir
+                };
+                console.log(`   🎯 LEAD MINER: Found next pheromone at [${checkX},${checkY}], continuing mining!`);
+                break;
+              }
+            }
+          }
+        }
+        
+        // Set new mining target if found, otherwise update position in same direction
+        if (nextTarget) {
+          monster.miningTarget = nextTarget;
+          monster.state = MonsterState.MINING;
+        } else if (monster.miningTarget) {
+          monster.miningDepth++;
+          // Continue mining in the same direction by updating target
+          if (monster.miningTarget.direction === 'left') {
+            monster.miningTarget.x = (tileX - 1) * TILE_SIZE + TILE_SIZE / 2;
+          } else if (monster.miningTarget.direction === 'right') {
+            monster.miningTarget.x = (tileX + 1) * TILE_SIZE + TILE_SIZE / 2;
+          } else if (monster.miningTarget.direction === 'down') {
+            monster.miningTarget.y = (tileY + 1) * TILE_SIZE + TILE_SIZE / 2;
+          } else if (monster.miningTarget.direction === 'up') {
+            monster.miningTarget.y = (tileY - 1) * TILE_SIZE + TILE_SIZE / 2;
+          }
+          console.log(`   ⛏️ LEAD MINER: No pheromones ahead, continuing in ${monster.miningTarget.direction} direction`);
+        }
+      } else {
+        // NON-LEAD MINERS: Normal behavior - continue in same direction
+        if (monster.miningTarget) {
+          monster.miningDepth++;
+          // Continue mining in the same direction by updating target
+          if (monster.miningTarget.direction === 'left') {
+            monster.miningTarget.x = (tileX - 1) * TILE_SIZE + TILE_SIZE / 2;
+          } else if (monster.miningTarget.direction === 'right') {
+            monster.miningTarget.x = (tileX + 1) * TILE_SIZE + TILE_SIZE / 2;
+          } else if (monster.miningTarget.direction === 'down') {
+            monster.miningTarget.y = (tileY + 1) * TILE_SIZE + TILE_SIZE / 2;
+          }
         }
       }
       
@@ -3338,10 +4159,7 @@ export class GameScene extends Phaser.Scene {
       return false; // Still on cooldown from last attempt
     }
     
-    // Must have high energy to wall crawl - it's exhausting!
-    if (monster.energy < 70) {
-      return false; // Too tired to attempt dangerous wall crawling
-    }
+    // Energy system removed - monsters can always attempt wall crawling
     
     // LEMMINGS PREFER GROUND: Only 1% chance to even attempt wall crawling!
     if (Math.random() > 0.01) {
@@ -3498,7 +4316,7 @@ export class GameScene extends Phaser.Scene {
   private updateUI(): void {
     // Update population - count ALL monsters for now
     const aliveMonsters = this.monsters.filter(m => m.state !== MonsterState.DEAD);
-    this.populationText.setText(`Population: ${aliveMonsters.length}`);
+    this.events.emit('updatePopulation', aliveMonsters.length, this.resourceTracker.maxPopulation);
     
     // Wave timer - proper countdown
     const waveInterval = 120000; // 2 minutes
@@ -3506,10 +4324,12 @@ export class GameScene extends Phaser.Scene {
     const timeUntilWave = Math.max(0, waveInterval - timeSinceWave);
     const minutes = Math.floor(timeUntilWave / 60000);
     const seconds = Math.floor((timeUntilWave % 60000) / 1000);
-    this.waveTimerText.setText(`Next Wave: ${minutes}:${seconds.toString().padStart(2, '0')}`);
+    const timerText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    this.events.emit('updateWaveTimer', timerText);
     
-    // TODO: Update individual resource counters when resource system is working
-    // Removed console.log spam that was crashing the game
+    // Update resources
+    const resources = this.resourceTracker.getResources();
+    this.events.emit('updateResources', resources);
   }
 
   private handleClick(pointer: Phaser.Input.Pointer): void {
@@ -3535,11 +4355,80 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     
-    // No monster clicked - place pheromone
+    // No monster clicked - handle build or pheromone action
     const tileX = Math.floor(worldX / TILE_SIZE);
     const tileY = Math.floor(worldY / TILE_SIZE);
-    this.pheromoneSystem.addPheromone(tileX, tileY, this.selectedPheromone, 50);
-    console.log(`Placed ${this.selectedPheromone} pheromone at tile (${tileX}, ${tileY})`);
+    
+    // Check if we're in build mode
+    if (this.selectedBuildItem) {
+      this.placeBuildItem(tileX, tileY, this.selectedBuildItem);
+      return;
+    }
+    
+    // Handle pheromone actions
+    if (this.selectedPheromone === 'ERASER') {
+      // Erase pheromone at this location
+      const pheromone = this.pheromoneSystem.getPheromoneAt(tileX, tileY);
+      if (pheromone) {
+        this.pheromoneSystem.removePheromone(pheromone.id);
+        console.log(`🧹 Erased pheromone at tile (${tileX}, ${tileY})`);
+      }
+    } else if (this.selectedPheromone === 'CLEAR_ALL') {
+      // Already handled in pheromoneSelected event
+    } else {
+      // Place pheromone
+      this.pheromoneSystem.addPheromone(tileX, tileY, this.selectedPheromone as PheromoneType, 50);
+      console.log(`Placed ${this.selectedPheromone} pheromone at tile (${tileX}, ${tileY})`);
+    }
+  }
+  
+  private placeBuildItem(tileX: number, tileY: number, itemId: string): void {
+    // Check if tile is valid (should be AIR)
+    if (tileX < 0 || tileX >= WORLD_WIDTH || tileY < 0 || tileY >= WORLD_HEIGHT) {
+      console.log('Cannot build - out of bounds');
+      return;
+    }
+    
+    const tile = this.world[tileX][tileY];
+    if (tile.type !== TileType.AIR) {
+      console.log('Cannot build - tile is not empty');
+      return;
+    }
+    
+    // Check cost and deduct resources
+    let cost = 0;
+    let tileType: TileType | null = null;
+    
+    if (itemId === 'RAMP_UP_RIGHT') {
+      cost = 2;
+      tileType = TileType.RAMP_UP_RIGHT;
+    } else if (itemId === 'RAMP_UP_LEFT') {
+      cost = 2;
+      tileType = TileType.RAMP_UP_LEFT;
+    }
+    
+    if (!tileType) {
+      console.log('Unknown build item');
+      return;
+    }
+    
+    // Check if player has enough dirt
+    const resources = this.resourceTracker.getResources();
+    if (resources.dirt < cost) {
+      console.log(`Not enough dirt! Need ${cost}, have ${resources.dirt}`);
+      return;
+    }
+    
+    // Deduct resources
+    this.resourceTracker.addResources(TileType.DIRT, -cost);
+    this.events.emit('updateResources', this.resourceTracker.getResources());
+    
+    // Place the ramp tile
+    tile.type = tileType;
+    tile.integrity = 100;
+    this.renderTile(tileX, tileY);
+    
+    console.log(`🏗️ Built ${itemId} at (${tileX}, ${tileY}) for ${cost} dirt`);
   }
 
   private renderWorld(): void {

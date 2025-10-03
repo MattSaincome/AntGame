@@ -65,7 +65,7 @@ export class ResourceChunkManager {
         tileType: tileType,
         size: chunkData.size,
         weight: chunkData.weight,
-        resourceValue: Math.floor(resourceValue / chunkData.count),
+        resourceValue: Math.max(1, Math.floor(resourceValue / chunkData.count)), // MINIMUM 1 resource per chunk
         carriersNeeded: this.calculateCarriersNeeded(chunkData.weight),
         currentCarriers: [],
         sprite: this.createChunkSprite(chunkX, chunkY, tileType, chunkData.size),
@@ -100,37 +100,51 @@ export class ResourceChunkManager {
     
     switch (tileType) {
       case TileType.DIRT:
-        // Dirt is LIGHT - single monster can carry
+        // Dirt is LIGHTEST - easy to carry, monster barely slowed
         return {
           count: random < 0.5 ? 2 : 3,
           size: ChunkSize.SMALL,  // Always small
-          weight: random < 0.5 ? 15 : 10  // Light enough for 1 carrier
+          weight: random < 0.5 ? 12 : 8  // Light: 8-12 weight
         };
         
       case TileType.STONE:
-        // Stone is much heavier - usually needs teamwork
+        // Stone is MEDIUM weight - noticeable slowdown
         return {
           count: random < 0.7 ? 2 : 3,
           size: random < 0.7 ? ChunkSize.LARGE : ChunkSize.SMALL,
-          weight: random < 0.7 ? 55 : 30  // Much heavier (was 25/12)
-        };
-        
-      case TileType.ROCK:
-        // Rock is extremely heavy - always needs multiple monsters
-        return {
-          count: random < 0.9 ? 2 : 3,
-          size: ChunkSize.LARGE,
-          weight: random < 0.9 ? 80 : 45  // Extremely heavy (was 35/18)
+          weight: random < 0.7 ? 40 : 25  // Medium: 25-40 weight
         };
         
       case TileType.ORE_COPPER:
-      case TileType.ORE_IRON:
-      case TileType.ORE_GOLD:
-        // Ore is incredibly dense - requires 3+ monsters working together
+        // Copper is HEAVIEST (denser than stone) - significant slowdown
         return {
           count: random < 0.8 ? 2 : 3,
           size: ChunkSize.LARGE,
-          weight: 100 + (resourceValue * 5)  // Super heavy (was 40 + resourceValue * 2)
+          weight: random < 0.8 ? 70 : 50  // Heavy: 50-70 weight
+        };
+        
+      case TileType.ORE_IRON:
+        // Iron even heavier than copper
+        return {
+          count: random < 0.8 ? 2 : 3,
+          size: ChunkSize.LARGE,
+          weight: 80 + (resourceValue * 3)  // Very heavy: 80+ weight
+        };
+        
+      case TileType.ORE_GOLD:
+        // Gold is extremely dense!
+        return {
+          count: random < 0.8 ? 2 : 3,
+          size: ChunkSize.LARGE,
+          weight: 100 + (resourceValue * 5)  // Extremely heavy: 100+ weight
+        };
+        
+      case TileType.ROCK:
+        // Rock is heavy but lighter than ores
+        return {
+          count: random < 0.9 ? 2 : 3,
+          size: ChunkSize.LARGE,
+          weight: random < 0.9 ? 55 : 35  // Heavy: 35-55 weight
         };
         
       case TileType.CRYSTAL:
@@ -367,6 +381,38 @@ export class ResourceChunkManager {
   }
 
   /**
+   * Get gravity multiplier based on material type - heavier materials fall faster!
+   * Hierarchy: Dirt (lightest) < Stone (medium) < Copper (heaviest)
+   */
+  private getGravityMultiplier(tileType: TileType): number {
+    switch (tileType) {
+      case TileType.DIRT:
+        return 1.0; // LIGHTEST - floats down gently
+        
+      case TileType.STONE:
+        return 1.4; // MEDIUM - noticeable drop
+        
+      case TileType.ORE_COPPER:
+        return 2.0; // HEAVIEST (from basic materials) - drops fast!
+        
+      case TileType.ROCK:
+        return 1.6; // Heavy but lighter than copper
+        
+      case TileType.ORE_IRON:
+        return 2.2; // Denser than copper
+        
+      case TileType.ORE_GOLD:
+        return 2.5; // Gold is extremely dense!
+        
+      case TileType.CRYSTAL:
+        return 1.3; // Lighter than stone but still solid
+        
+      default:
+        return 1.0; // Default to dirt weight
+    }
+  }
+
+  /**
    * Apply gravity and collision physics to a single chunk - FIXED BOUNCING!
    */
   private updateChunkPhysics(chunk: ResourceChunk, deltaTime: number, gravity: number, 
@@ -379,13 +425,21 @@ export class ResourceChunkManager {
       return; // Don't apply any more physics - chunk is at rest!
     }
     
+    // Material-specific gravity multipliers - heavier materials fall faster!
+    const gravityMultiplier = this.getGravityMultiplier(chunk.tileType);
+    const materialGravity = gravity * gravityMultiplier;
+    
     // Apply gravity if not on ground
     if (!chunk.onGround) {
-      chunk.velocityY += gravity * deltaTime;
+      chunk.velocityY += materialGravity * deltaTime;
       
-      // Air resistance
-      chunk.velocityX *= airResistance;
-      chunk.velocityY = Math.min(chunk.velocityY, 300); // Terminal velocity
+      // Air resistance (heavier materials have less air resistance)
+      const materialAirResistance = airResistance + ((1 - airResistance) * (gravityMultiplier - 1) * 0.3);
+      chunk.velocityX *= materialAirResistance;
+      
+      // Terminal velocity increases with weight
+      const terminalVelocity = 300 * gravityMultiplier;
+      chunk.velocityY = Math.min(chunk.velocityY, terminalVelocity);
     } else {
       // On ground - apply strong friction to settle quickly
       chunk.velocityX *= 0.7; // Strong ground friction

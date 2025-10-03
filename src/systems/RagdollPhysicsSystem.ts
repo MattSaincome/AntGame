@@ -547,9 +547,9 @@ export class RagdollPhysicsSystem {
     // Initialize flap timer
     if (state.flapTimer === undefined) state.flapTimer = 0;
     
-    // Wing flapping animation - faster when moving, slower when hovering
+    // Wing flapping animation - SLOWER and more gentle
     const speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
-    const flapSpeed = speed > 50 ? 200 : 400; // Fast flap when moving, slow when hovering
+    const flapSpeed = speed > 50 ? 600 : 1000; // MUCH SLOWER: 600ms when moving, 1000ms when hovering (was 200/400)
     
     state.flapTimer += deltaTime * 1000;
     if (state.flapTimer >= flapSpeed) {
@@ -557,21 +557,21 @@ export class RagdollPhysicsSystem {
     }
     
     const flapProgress = state.flapTimer / flapSpeed;
-    const flapAngle = Math.sin(flapProgress * Math.PI * 2) * 0.6; // Wing flap range: ±0.6 radians (±34°)
+    const flapAngle = Math.sin(flapProgress * Math.PI * 2) * 0.3; // GENTLER: ±0.3 radians (±17°) instead of ±0.6
     
-    // Animate wings
+    // Animate wings - SMOOTHER and more natural
     if (state.leftWing) {
       // Left wing flaps up and down
       state.leftWing.rotation = flapAngle;
-      // Slight scale change for wing "power" effect
-      const wingScale = 1.0 + Math.abs(flapAngle) * 0.1;
+      // REDUCED scale change for subtler effect
+      const wingScale = 1.0 + Math.abs(flapAngle) * 0.05; // Was 0.1, now 0.05
       state.leftWing.setScale(wingScale);
     }
     
     if (state.rightWing) {
       // Right wing flaps opposite to left (or same - both work)
       state.rightWing.rotation = -flapAngle;
-      const wingScale = 1.0 + Math.abs(flapAngle) * 0.1;
+      const wingScale = 1.0 + Math.abs(flapAngle) * 0.05; // Was 0.1, now 0.05
       state.rightWing.setScale(wingScale);
     }
     
