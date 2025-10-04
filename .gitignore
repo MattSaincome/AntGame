@@ -36,3 +36,13 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Large asset directories with long paths (external sprite packs)
+public/monster-parts/MonsterPartsGPT/
+public/monster-parts/additional sprites/
+public/monster-parts/craftpix-net-*/
+public/monster-parts/minotoradd/
+public/monster-parts/moresprites/
+public/monster-parts/spine_images/
+public/tiles/cavesofgallet/
+public/tiles/enviroment and mine tiles/
